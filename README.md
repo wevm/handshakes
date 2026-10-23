@@ -64,6 +64,27 @@ Read github.com/wevm/handshakes and replace the stored API keys of my project wi
 
 ## Usage
 
+The examples below form one deployment of three parties. A CI job calls `api.example.com`, and `auth.example.com` issues its access tokens. The job stores no secret, and starts from the URL of the API only.
+
+```mermaid
+sequenceDiagram
+  %% The authorization server and the API are separate hosts. The job starts from the API URL only.
+  participant Job as CI job (Client)
+  participant GH as GitHub
+  participant AS as auth.example.com (Better Auth)
+  participant API as api.example.com (Resource)
+  Job->>API: 1. GET /.well-known/oauth-protected-resource
+  API-->>Job: 2. authorization_servers: auth.example.com
+  Job->>AS: 3. GET /.well-known/oauth-authorization-server
+  Job->>GH: 4. Request an OIDC token for auth.example.com
+  GH-->>Job: 5. Subject token
+  Job->>AS: 6. RFC 8693 exchange, resource=api.example.com
+  AS-->>Job: 7. Access token with aud=api.example.com
+  Job->>API: 8. GET /v1/items with Authorization: Bearer
+  API->>AS: 9. Fetch the signing keys, once
+  API-->>Job: 10. Response
+```
+
 ### `handshakes`
 
 `Client` returns access tokens for one API. It resolves each token in this order:
@@ -74,13 +95,16 @@ Read github.com/wevm/handshakes and replace the stored API keys of my project wi
 4. A device grant, if stdin is a TTY and `CI` is not set.
 5. Otherwise, `Client.AuthorizationRequiredError`.
 
+`Client.discover` finds the authorization server from the API. `Client.create` takes the `issuer` directly, for an API without RFC 9728 metadata.
+
 ```ts
 import { Client } from 'handshakes'
 
-const client = Client.create({
+// Reads the RFC 9728 metadata of the API, then creates a client for its authorization server.
+const client = await Client.discover({
   // OAuth client for the device grant and refresh. Required on a laptop only.
   clientId: 'example-cli',
-  issuer: 'https://auth.example.com',
+  resource: 'https://api.example.com',
   scope: 'data:read',
 })
 
@@ -111,34 +135,7 @@ const client = Client.create({
 
 ### `handshakes/server`
 
-`Server` serves the RFC 8693 token endpoint and its RFC 8414 metadata as a fetch handler. It verifies the subject token, matches a trust policy, and calls `issue` for the credential.
-
-```ts
-import { Policy, Server } from 'handshakes/server'
-
-const server = Server.create({
-  // Mints the credential of the host. `expiresAt` ends no later than the subject token.
-  issue: async (context) => ({
-    accessToken: await keys.mint({ expiresAt: context.expiresAt, scopes: context.policy.scopes }),
-    expiresAt: context.expiresAt,
-  }),
-  issuer: 'https://auth.example.com',
-  // Accepts the GitHub Actions tokens of one repository on `main`.
-  policies: [
-    Policy.githubActions({
-      audience: 'https://auth.example.com',
-      ref: 'refs/heads/main',
-      repositoryId: '812345',
-      scopes: ['data:read'],
-    }),
-  ],
-})
-
-// Serves `POST /oauth2/token` and `/.well-known/oauth-authorization-server`.
-export default { fetch: server.fetch }
-```
-
-`Resource` verifies the tokens that an API receives. It serves the RFC 9728 metadata and returns the `401` challenge.
+`Resource` verifies the tokens that `api.example.com` receives. It serves the RFC 9728 metadata that names `auth.example.com`, and returns the `401` challenge.
 
 ```ts
 import { Resource } from 'handshakes/server'
@@ -163,9 +160,36 @@ export default {
 }
 ```
 
+An API can also run `Server` itself, with no separate authorization server. `Server` serves the RFC 8693 token endpoint and its RFC 8414 metadata as a fetch handler, and `issue` mints the credential of the host.
+
+```ts
+import { Policy, Server } from 'handshakes/server'
+
+const server = Server.create({
+  // Mints an API key. `context.expiresAt` already ends no later than the subject token.
+  issue: async (context) => ({
+    accessToken: await keys.mint({ expiresAt: context.expiresAt, scopes: context.policy.scopes }),
+    expiresAt: context.expiresAt,
+  }),
+  issuer: 'https://api.example.com',
+  // Accepts the GitHub Actions tokens of one repository on `main`.
+  policies: [
+    Policy.githubActions({
+      audience: 'https://api.example.com',
+      ref: 'refs/heads/main',
+      repositoryId: '812345',
+      scopes: ['data:read'],
+    }),
+  ],
+})
+
+// Serves `POST /oauth2/token` and `/.well-known/oauth-authorization-server`.
+export default { fetch: server.fetch }
+```
+
 ### `handshakes/better-auth`
 
-`tokenExchange` adds the same exchange to a [Better Auth](https://www.better-auth.com) server with `@better-auth/oauth-provider`. The client receives Better Auth access tokens.
+`tokenExchange` adds the exchange to `auth.example.com`, a [Better Auth](https://www.better-auth.com) server with `@better-auth/oauth-provider`. Its access tokens are JWTs with the `aud` of the API, so `Resource` verifies them with the keys of `auth.example.com`.
 
 ```ts
 import { oauthProvider } from '@better-auth/oauth-provider'
@@ -175,9 +199,16 @@ import { tokenExchange } from 'handshakes/better-auth'
 import { Policy } from 'handshakes/server'
 
 export const auth = betterAuth({
+  baseURL: 'https://auth.example.com',
   plugins: [
+    // Signs the access tokens, and serves the keys that `Resource` fetches.
     jwt(),
-    oauthProvider({ consentPage: '/consent', loginPage: '/login' }),
+    oauthProvider({
+      consentPage: '/consent',
+      loginPage: '/login',
+      // Issues JWT access tokens with the `aud` of the API (RFC 8707).
+      resources: ['https://api.example.com'],
+    }),
     // Caps every exchanged access token at 15 minutes.
     tokenExchange({ maxLifetime: 900 }),
   ],
