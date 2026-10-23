@@ -227,6 +227,30 @@ describe('status', () => {
       }
     `)
   })
+
+  test('reports the interactive default that token applies', async () => {
+    // `CI` in the injected environment disables the device grant, also when stdin is a TTY.
+    const { approvals, client } = create({ env: { CI: 'true' }, interactive: undefined })
+
+    const status = await client.status()
+    const error = await client.token().catch((error: unknown) => error)
+
+    expect(status).toMatchInlineSnapshot(`
+      {
+        "checked": [
+          "vercel",
+          "githubActions",
+          "gitlab",
+          "circleci",
+          "gcp",
+        ],
+        "interactive": false,
+        "method": "none",
+      }
+    `)
+    expect(error).toBeInstanceOf(Client.AuthorizationRequiredError)
+    expect(approvals.length).toMatchInlineSnapshot(`0`)
+  })
 })
 
 describe('with a subject token', () => {
