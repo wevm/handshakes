@@ -125,15 +125,15 @@ const token = await Identity.token({ audience: 'https://api.example.com', source
 
 ### Compute Engine
 
-`Source.gcp` detects Cloud Run and Cloud Functions through `K_SERVICE`. Compute Engine and GKE set no variable to detect. On those hosts, override `detect` of the source.
+`Source.gcp` detects Cloud Run and Cloud Functions through `K_SERVICE`. Compute Engine and GKE set no variable to detect. On those hosts, set `detect` to `'always'`, and list the source last.
 
 ```ts [token.ts]
 import { Identity, Source } from 'handshakes'
 
 // Requests the token from the metadata server, on a host that sets no `K_SERVICE`.
-const gcp = Source.from({ ...Source.gcp(), detect: () => true })
+const sources = [...Source.defaults, Source.gcp({ detect: 'always' })]
 
-const token = await Identity.token({ audience: 'https://api.example.com', sources: [gcp] })
+const token = await Identity.token({ audience: 'https://api.example.com', sources })
 ```
 
 ### CLI Output

@@ -17,7 +17,7 @@ A source detects its platform from environment variables, then requests the subj
 For a source with a fixed audience, the client compares the `aud` of the token with the requested audience. A mismatch throws `Identity.AudienceError`, and the client does not send the token.
 
 :::note
-`Source.gcp()` detects Cloud Run and Cloud Functions only. Compute Engine and GKE set no variable to detect, so a source for them needs its own `detect`, such as `Source.from({ ...Source.gcp(), detect: () => true })`.
+`Source.gcp()` detects Cloud Run and Cloud Functions only. Compute Engine and GKE set no variable to detect, so list `Source.gcp({ detect: 'always' })` last in `sources` there.
 :::
 
 ## Runtimes

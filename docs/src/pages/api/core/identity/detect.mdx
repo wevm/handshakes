@@ -56,12 +56,11 @@ The first source that detects its platform, or `undefined` when none does.
 const method = Identity.detect() ? 'exchange' : 'grant'
 ```
 
-Some platforms set no variable to detect, such as Compute Engine and GKE. `Source.gcp()` detects `K_SERVICE` only, so it detects Cloud Run and Cloud Functions but not these platforms. On them, pass a source whose `detect` returns `true`.
+Some platforms set no variable to detect, such as Compute Engine and GKE. `Source.gcp()` detects `K_SERVICE` only, so it detects Cloud Run and Cloud Functions but not these platforms. On them, list `Source.gcp({ detect: 'always' })` last.
 
 ```ts
 import { Identity, Source } from 'handshakes'
 
-// Uses the metadata server of Compute Engine, which sets no variable to detect
-const gce = Source.from({ ...Source.gcp(), detect: () => true })
-Identity.detect({ sources: [gce] })
+// Detects Compute Engine, which sets no variable, after every other source
+Identity.detect({ sources: [...Source.defaults, Source.gcp({ detect: 'always' })] })
 ```

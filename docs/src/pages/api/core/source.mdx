@@ -109,16 +109,24 @@ Identity.token({ audience: '<organization id>', sources: [Source.circleci()] })
 
 Google Cloud. It requests an identity token for any audience from the metadata server: a `GET` of `/computeMetadata/v1/instance/service-accounts/default/identity` with `audience` and `format=full`, and the header `Metadata-Flavor: Google`.
 
-The source detects Cloud Run and Cloud Functions through `K_SERVICE`. Compute Engine and GKE set no such variable, so `Source.gcp()` does not detect them, even in `sources`. On those platforms, list a copy whose `detect` returns `true`:
+The source detects Cloud Run and Cloud Functions through `K_SERVICE`. Compute Engine and GKE set no such variable, so `Source.gcp()` does not detect them. On those platforms, set `detect` to `'always'`.
+
+#### options.detect
+
+- **Type:** `'always' | 'env'`
+- **Default:** `'env'`
+
+How the source detects Google Cloud. `'env'` detects `K_SERVICE`. `'always'` detects on every platform, for Compute Engine and GKE. A detected source that fails throws, so list an `'always'` source last. `Source.defaults` uses `'env'`.
 
 ```ts
 import { Client, Source } from 'handshakes'
 
-// [!code hl:2]
-// Compute Engine and GKE set no variable to detect, so this copy always detects
-const gcp = Source.from({ ...Source.gcp(), detect: () => true })
-
-const client = Client.create({ issuer: 'https://auth.example.com', sources: [gcp] })
+const client = Client.create({
+  issuer: 'https://auth.example.com',
+  // [!code hl:2]
+  // Compute Engine and GKE set no variable to detect, so this source always detects
+  sources: [...Source.defaults, Source.gcp({ detect: 'always' })],
+})
 ```
 
 #### options.metadataHost

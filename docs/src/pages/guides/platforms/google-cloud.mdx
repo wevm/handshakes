@@ -6,10 +6,10 @@ The metadata server of Google Cloud signs an identity token for the service acco
 
 The client exchanges the subject token at the authorization server (RFC 8693 token exchange). A trust policy on the server matches its claims, such as `sub`, the unique ID of the service account. The server then returns an access token that expires in minutes.
 
-| Platform                   | Detection                                         |
-| -------------------------- | ------------------------------------------------- |
-| Cloud Run, Cloud Functions | `Source.gcp`, through `K_SERVICE`                 |
-| Compute Engine, GKE        | A source that always detects, listed in `sources` |
+| Platform                   | Detection                                       |
+| -------------------------- | ----------------------------------------------- |
+| Cloud Run, Cloud Functions | `Source.gcp`, through `K_SERVICE`               |
+| Compute Engine, GKE        | `Source.gcp({ detect: 'always' })`, listed last |
 
 ## Walkthrough
 
@@ -73,19 +73,19 @@ gcloud iam service-accounts describe ci@acme.iam.gserviceaccount.com --format='v
 
 ### Explicit Detection
 
-Compute Engine and GKE set no variable that `Source.gcp` reads. So `Source.gcp().detect` returns `false` there, also when `sources` lists the source. Wrap the source with `Source.from` and a `detect` that returns `true`.
+Compute Engine and GKE set no variable that `Source.gcp` reads. So `Source.gcp().detect` returns `false` there. Set `detect` to `'always'`, and list the source after every other source.
 
 ```ts [server.ts]
 import { Client, Source } from 'handshakes'
 
 const client = Client.create({
   issuer: 'https://auth.example.com',
-  // No variable marks Compute Engine or GKE, so this source applies everywhere it runs.
-  sources: [Source.from({ ...Source.gcp(), detect: () => true })],
+  // No variable marks Compute Engine or GKE, so this source detects everywhere it runs.
+  sources: [...Source.defaults, Source.gcp({ detect: 'always' })],
 })
 ```
 
-The default detection covers Cloud Run and Cloud Functions only. List this source only in code that runs on Google Cloud, since it sends a request to the metadata server.
+The default detection covers Cloud Run and Cloud Functions only. A detected source that fails throws, so an `'always'` source in first place hides every other source. List it only in code that runs on Google Cloud, since it sends a request to the metadata server.
 
 ### Metadata Host
 
