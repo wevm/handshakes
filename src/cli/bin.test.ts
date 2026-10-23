@@ -4,6 +4,7 @@ import * as Fs from 'node:fs'
 import * as Path from 'node:path'
 import * as Esbuild from 'esbuild'
 import { Issuer } from 'handshakes/test'
+import * as Server from '../../test/Server.js'
 
 describe('handshakes', () => {
   let bin: string
@@ -30,16 +31,24 @@ describe('handshakes', () => {
 
   /**
    * Runs the CLI with `env` in place of the environment of the test process. The child runs
-   * asynchronously, so servers in the test process keep answering its requests.
+   * asynchronously, so servers in the test process keep answering its requests. `onStderr`
+   * receives the error output as it arrives.
    */
-  function run(args: readonly string[], env: Readonly<Record<string, string>> = {}) {
+  function run(
+    args: readonly string[],
+    env: Readonly<Record<string, string>> = {},
+    onStderr: (stderr: string) => void = () => {},
+  ) {
     return new Promise<{ status: number | null; stderr: string; stdout: string }>((resolve) => {
       const child = ChildProcess.spawn(process.execPath, [bin, ...args], {
         env: { PATH: process.env['PATH'] ?? '', ...env },
       })
       let stderr = ''
       let stdout = ''
-      child.stderr.on('data', (chunk: Buffer) => (stderr += chunk))
+      child.stderr.on('data', (chunk: Buffer) => {
+        stderr += chunk
+        onStderr(stderr)
+      })
       child.stdout.on('data', (chunk: Buffer) => (stdout += chunk))
       child.on('close', (status) => resolve({ status, stderr, stdout }))
     })
@@ -55,8 +64,14 @@ describe('handshakes', () => {
       Usage: handshakes <command>
 
       Commands:
-        status  Names the source that detects its platform here, and the sources that were checked.
-        token   Prints the OIDC token that the platform signs for this code, with the requested audience.
+        authorize  Runs the device grant (RFC 8628) and stores the grant. Alias: login.
+        exec       Runs the command after \`--\` with an access token in an environment variable, then exits with its code.
+        login      Runs the device grant (RFC 8628) and stores the grant. Alias: login.
+        logout     Revokes the refresh token (RFC 7009) and deletes the stored grant. Alias: logout.
+        profiles   Lists the profiles, the file of each, and the default profile.
+        revoke     Revokes the refresh token (RFC 7009) and deletes the stored grant. Alias: logout.
+        status     Names the source that detects its platform here and, for a profile, the stored grant and its expiry.
+        token      Prints the access token of a profile. With --audience, prints the OIDC token that the platform signs for this code.
 
       Integrations:
         completions  Generate shell completion script
@@ -127,5 +142,147 @@ describe('handshakes', () => {
       message: "No source detected its platform for audience https://api.example.com. Checked: vercel, githubActions, gitlab, gcp."
       "
     `)
+  })
+
+  describe('with a profile', () => {
+    let env: Record<string, string>
+    let server: Server.create.ReturnType
+
+    beforeAll(async () => {
+      server = await Server.create()
+      const config = Path.join(dir, 'handshakes.json')
+      Fs.writeFileSync(
+        config,
+        JSON.stringify({
+          default: 'local',
+          profiles: {
+            local: {
+              clientId: server.clientId,
+              env: 'API_TOKEN',
+              issuer: server.url,
+              scope: 'openid email offline_access',
+            },
+          },
+        }),
+      )
+      env = { HANDSHAKES_CONFIG: config, XDG_CONFIG_HOME: Path.join(dir, 'config') }
+    })
+
+    afterAll(async () => {
+      await server.close()
+    })
+
+    test('authorize, token, exec, status, and revoke', async () => {
+      // The CLI prints the user code to stderr, and the test approves it as the user would.
+      let approval: Promise<void> | undefined
+      const authorize = await run(['authorize', '--json'], env, (stderr) => {
+        const code = /confirm ([A-Z0-9-]+)\./.exec(stderr)?.[1]
+        if (code && !approval) approval = server.approve(code)
+      })
+      await approval
+
+      expect(authorize.status).toMatchInlineSnapshot(`0`)
+      expect(JSON.parse(authorize.stdout)).toMatchInlineSnapshot(
+        { expiresAt: expect.any(Number) },
+        `
+        {
+          "expiresAt": Any<Number>,
+          "refreshable": true,
+          "scope": "openid email offline_access",
+        }
+      `,
+      )
+
+      const token = await run(['token'], env)
+      const userinfo = await fetch(`${server.url}/oauth2/userinfo`, {
+        headers: { authorization: `Bearer ${token.stdout.trim()}` },
+      })
+
+      expect(token.status).toMatchInlineSnapshot(`0`)
+      expect(userinfo.status).toMatchInlineSnapshot(`200`)
+
+      const exec = await run(
+        ['exec', '--', process.execPath, '-e', 'process.stdout.write(process.env.API_TOKEN ?? "")'],
+        env,
+      )
+
+      expect(exec.status).toMatchInlineSnapshot(`0`)
+      expect(exec.stdout).toBe(token.stdout.trim())
+
+      const exit = await run(['exec', '--', process.execPath, '-e', 'process.exit(7)'], env)
+
+      expect(exit.status).toMatchInlineSnapshot(`7`)
+
+      const status = await run(['status', '--json'], env)
+
+      expect(JSON.parse(status.stdout)).toMatchInlineSnapshot(
+        {
+          grant: { expiresAt: expect.any(Number) },
+          issuer: expect.any(String),
+        },
+        `
+        {
+          "checked": [
+            "vercel",
+            "githubActions",
+            "gitlab",
+            "gcp",
+          ],
+          "grant": {
+            "expiresAt": Any<Number>,
+            "method": "grant",
+            "refreshable": true,
+          },
+          "issuer": Any<String>,
+          "profile": "local",
+          "source": null,
+        }
+      `,
+      )
+
+      const revoke = await run(['revoke', '--json'], env)
+      const after = await run(['token'], env)
+
+      expect(revoke.status).toMatchInlineSnapshot(`0`)
+      expect(after.status).toMatchInlineSnapshot(`3`)
+      expect(after.stdout.replace(server.url, '<issuer>')).toMatchInlineSnapshot(`
+        "code: AUTHORIZATION_REQUIRED
+        message: "Authorization is required for <issuer>. Run the device grant with \`authorize\`."
+        "
+      `)
+    }, 30_000)
+
+    test('profiles lists the profiles and the default', async () => {
+      const result = await run(['profiles', '--json'], env)
+
+      expect(JSON.parse(result.stdout)).toMatchInlineSnapshot(
+        {
+          profiles: [{ file: expect.any(String), issuer: expect.any(String) }],
+        },
+        `
+        {
+          "default": "local",
+          "profiles": [
+            {
+              "file": Any<String>,
+              "issuer": Any<String>,
+              "name": "local",
+            },
+          ],
+        }
+      `,
+      )
+    })
+
+    test('names an unknown profile', async () => {
+      const result = await run(['token', 'missing'], env)
+
+      expect(result.status).toMatchInlineSnapshot(`2`)
+      expect(result.stdout).toMatchInlineSnapshot(`
+        "code: NO_PROFILE
+        message: No profile is named missing.
+        "
+      `)
+    })
   })
 })

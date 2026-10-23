@@ -26,7 +26,7 @@ Source commit: `0b589ec34481856b4153526f10a0a35558a201a8`. Retrieved 2026-10-23.
 - The client verifies a fixed-audience token's `aud` before it sends the token.
 - `Server` and `Resource` accept RS256 and ES256 only, match `iss` and `aud` exactly, and match policies on identifiers that cannot change, such as `repository_id` and `project_id`, never on names.
 - Never issue a token that outlives the subject token it replaces.
-- `Store.file` writes with mode 0600, writes atomically, and refreshes under a lock that covers every process. A reused refresh token can revoke every grant of the client and user.
+- `NodeStore.file` writes with mode 0600, writes atomically, and refreshes under a lock that covers every process. A reused refresh token can revoke every grant of the client and user.
 - Never read a client secret from argv. Read it from an environment variable that the caller names.
 - Compare secrets in constant time on the server.
 
@@ -169,7 +169,7 @@ Applies to documentation, comments, TSDoc, interface copy, commit messages, and 
   - **Authorization server:** `Server` behind a local HTTP server, and `test/Server.ts`, a local Better Auth server with `oauthProvider`, `oauthDeviceAuthorization`, and `jwt`, on a random port with its own in-memory database.
   - **Subject tokens:** the `handshakes/test` issuer, which signs real tokens and serves the endpoints that platform sources call. Pass its `env()` to the source.
   - **Platforms:** a GitHub Actions job with `id-token: write`, and a Vercel preview.
-  - **Processes:** the built CLI, and several processes that share one `Store.file` for lock and refresh races.
+  - **Processes:** the built CLI, and several processes that share one `NodeStore.file` for lock and refresh races.
 - Approve a device code through the server's own approval endpoint as a signed-in test user. Never write a grant into the database directly.
 - Cover complete supported flows as they land. Before a later stage exists, test the real available public boundary, and do not fabricate a downstream stage.
 - Exclude colocated tests and type fixtures from published files and build outputs.

@@ -1,6 +1,6 @@
 # Handshakes implementation plan
 
-Status: phases 0 and 1 done, except the manual Vercel AI Gateway check of phase 1. Phase 2 is next.
+Status: phases 0 to 2 done, except two manual checks: Vercel AI Gateway (phase 1) and Google OAuth (phase 2). Phase 3 is next.
 
 Handshakes is an OAuth client library and CLI that replaces stored API keys with short-lived access tokens.
 
@@ -140,7 +140,7 @@ One package, `handshakes`, with five entries and a bin.
 | `handshakes`             | `Client`, `DeviceGrant`, `Exchange`, `Identity`, `Metadata`, `Source`, `Store` |
 | `handshakes/server`      | `Policy`, `Resource`, `Server`                                                 |
 | `handshakes/better-auth` | `tokenExchange`                                                                |
-| `handshakes/node`        | `NodeSource`, and `Store` with `file` and `keychain`                           |
+| `handshakes/node`        | `NodeSource`, `NodeStore` (`file`, and `keychain` in phase 4)                  |
 | `handshakes/test`        | `Issuer`                                                                       |
 | bin `handshakes`         | The CLI                                                                        |
 
@@ -303,12 +303,12 @@ type Store = {
 }
 ```
 
-| Store                                      | Entry             | Behavior                                                                                                                            |
-| ------------------------------------------ | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `Store.memory()`                           | `handshakes`      | One process only                                                                                                                    |
-| `Store.from(store)`                        | `handshakes`      | Types a custom store                                                                                                                |
-| `Store.file({ directory?, lockTimeout? })` | `handshakes/node` | Default directory `~/.config/handshakes/grants`. Mode 0600, atomic writes, a lock file with a stale timeout, a read after each lock |
-| `Store.keychain({ service? })`             | `handshakes/node` | macOS `security`, Linux `secret-tool`                                                                                               |
+| Store                                          | Entry             | Behavior                                                                                                                            |
+| ---------------------------------------------- | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `Store.memory()`                               | `handshakes`      | One process only                                                                                                                    |
+| `Store.from(store)`                            | `handshakes`      | Types a custom store                                                                                                                |
+| `NodeStore.file({ directory?, lockTimeout? })` | `handshakes/node` | Default directory `~/.config/handshakes/grants`. Mode 0600, atomic writes, a lock file with a stale timeout, a read after each lock |
+| `NodeStore.keychain({ service? })`             | `handshakes/node` | macOS `security`, Linux `secret-tool`                                                                                               |
 
 The store key is the issuer and the client ID.
 
@@ -405,6 +405,8 @@ type Grant = {
   clientId: string
   /** When the access token expires. */
   expiresAt: number
+  /** When the access token was issued. The cache margin of 20% derives from it. */
+  issuedAt: number
   issuer: string
   refreshToken?: string | undefined
   scope?: string | undefined
@@ -416,7 +418,6 @@ type Status =
       expiresAt: number
       method: 'grant'
       refreshable: boolean
-      store: string
       subject?: string | undefined
     }
   | { checked: readonly string[]; interactive: boolean; method: 'none' }
@@ -433,17 +434,21 @@ type Token = {
 
 ### Errors
 
-| Error                               | Thrown when                                                                                | Fields                                |
-| ----------------------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------- |
-| `Client.AuthorizationRequiredError` | No source detects, no grant is stored, and the client is not interactive                   | `issuer`                              |
-| `DeviceGrant.DeniedError`           | The user denies the code                                                                   |                                       |
-| `DeviceGrant.ExpiredError`          | The code expires before approval                                                           |                                       |
-| `Exchange.RejectedError`            | The server returns an RFC 6749 §5.2 error                                                  | `error`, `errorDescription`, `status` |
-| `Identity.AudienceError`            | A token with a fixed audience has another `aud`                                            | `expected`, `received`, `source`      |
-| `Identity.NotFoundError`            | No source detects                                                                          | `audience`, `checked`                 |
-| `Metadata.NotFoundError`            | The issuer or resource serves no metadata                                                  | `url`                                 |
-| `Source.RequestError`               | The detected source fails. The hint states the fix, such as `permissions: id-token: write` | `hint`, `source`                      |
-| `Store.LockTimeoutError`            | Another process holds the lock past `lockTimeout`                                          | `key`                                 |
+| Error                               | Thrown when                                                                                           | Fields                                |
+| ----------------------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------- |
+| `Client.AuthorizationRequiredError` | No source detects, no grant is stored, and the client is not interactive                              | `issuer`                              |
+| `DeviceGrant.DeniedError`           | The user denies the code                                                                              |                                       |
+| `DeviceGrant.ExpiredError`          | The code expires before approval                                                                      |                                       |
+| `Client.RejectedError`              | The token or revocation endpoint returns an RFC 6749 §5.2 error other than `invalid_grant` on refresh | `error`, `errorDescription`, `status` |
+| `DeviceGrant.RejectedError`         | The device or token endpoint returns another RFC 6749 §5.2 error                                      | `error`, `errorDescription`, `status` |
+| `DeviceGrant.UnsupportedError`      | The server has no device authorization endpoint                                                       |                                       |
+| `Exchange.RejectedError`            | The server returns an RFC 6749 §5.2 error                                                             | `error`, `errorDescription`, `status` |
+| `Grant.InvalidResponseError`        | A token response has no `access_token` or `expires_in`                                                |                                       |
+| `Identity.AudienceError`            | A token with a fixed audience has another `aud`                                                       | `expected`, `received`, `source`      |
+| `Identity.NotFoundError`            | No source detects                                                                                     | `audience`, `checked`                 |
+| `Metadata.NotFoundError`            | The issuer or resource serves no metadata                                                             | `url`                                 |
+| `Source.RequestError`               | The detected source fails. The hint states the fix, such as `permissions: id-token: write`            | `hint`, `source`                      |
+| `NodeStore.LockTimeoutError`        | Another process holds the lock past `lockTimeout`                                                     | `key`                                 |
 
 ### `handshakes/test`
 
@@ -792,15 +797,15 @@ $ handshakes fetch https://api.example.com/v1/items --fail
 
 ### Exit codes
 
-| Code  | Meaning                                                          |
-| ----- | ---------------------------------------------------------------- |
-| 0     | Success                                                          |
-| 1     | Unexpected error                                                 |
-| 2     | Invalid usage                                                    |
-| 3     | Authorization required: no source, no grant, and not interactive |
-| 4     | Rejected by the server: `invalid_grant` on exchange or refresh   |
-| 22    | `fetch --fail` received HTTP 400 or more                         |
-| Other | `exec` returns the exit code of the child                        |
+| Code  | Meaning                                                            |
+| ----- | ------------------------------------------------------------------ |
+| 0     | Success                                                            |
+| 1     | Unexpected error                                                   |
+| 2     | Invalid usage, such as an unknown profile or no command after `--` |
+| 3     | Authorization required: no source, no grant, and not interactive   |
+| 4     | Rejected by the server: `invalid_grant` on exchange or refresh     |
+| 22    | `fetch --fail` received HTTP 400 or more                           |
+| Other | `exec` returns the exit code of the child                          |
 
 ### MCP tools
 
@@ -828,7 +833,7 @@ No mocks, stubs, or stubbed globals. Every test runs against a real server or a 
 | Exchange                      | `Server` behind a local HTTP server, and the local Better Auth server with `handshakes/better-auth`, both fed by the test issuer |
 | Resource                      | `Resource` against tokens of the local Better Auth server and of the test issuer                                                 |
 | Interoperability              | Google STS from GitHub Actions in CI. Google OAuth by hand. OpenRouter when a Business plan is available                         |
-| Races                         | Several processes that share one `Store.file`                                                                                    |
+| Races                         | Several processes that share one `NodeStore.file`                                                                                |
 | CLI                           | The built bin against the local server                                                                                           |
 
 `test/Server.ts` starts the local Better Auth server on a random port. A test approves a user code through the server's own approval endpoint, as a signed-in test user.
@@ -859,7 +864,7 @@ Done when a GitHub Actions job verifies its own token against the JWKS of GitHub
 - `DeviceGrant.start` and `wait`, with `interval`, `slow_down`, `expired_token`, and `access_denied`.
 - `Client.create` with steps 2 to 4 of the resolution order: `token`, `fetch`, `authorize`, `revoke`, `status`, and `invalidate`.
 - The cache, with one request in flight for each client.
-- `Store.memory`, `Store.from`, and `Store.file`.
+- `Store.memory`, `Store.from`, and `NodeStore.file`.
 - CLI: `authorize`, `revoke`, `status`, `token [profile]`, `exec`, `profiles`, and the profile files.
 
 Tests:
@@ -871,6 +876,12 @@ Tests:
 - Without a TTY, the client throws and never prompts.
 
 Done when `authorize` and `exec` work against the local server and Google OAuth, and the race test passes 100 runs in a row.
+
+Notes from the build:
+
+- Incur reads no `--`, so the CLI entry splits the arguments at `--` and passes the words after it to `exec`.
+- `revoke` deletes the stored grant first. A revocation endpoint that returns `400` for a token it no longer knows (Better Auth does) counts as revoked.
+- A refresh that returns `invalid_grant` deletes the stored grant, so the next call requires authorization.
 
 ### Phase 3: token exchange
 
@@ -905,7 +916,7 @@ Done when a CI workflow with no secrets calls a protected API, and the same code
 - `Metadata.protectedResource`, `Metadata.challenge`, and `Client.discover`.
 - CLI: `fetch`, and `--mcp` with `fetch` and `status`.
 - `Source.circleci` and `NodeSource.buildkite`.
-- `Store.keychain`.
+- `NodeStore.keychain`.
 - GitHub App device flow, which has no metadata and needs `endpoints`.
 
 Done when `handshakes fetch` works without a profile against an API that uses `Resource`, and an agent calls it through MCP.
