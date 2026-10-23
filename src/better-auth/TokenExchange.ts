@@ -27,6 +27,10 @@ const model = 'trustPolicy'
  * per request. So the plugin refuses a subject token that expires before that lifetime ends. Set
  * `m2mAccessTokenExpiresIn` below the lifetime of the shortest subject token, such as 300 seconds
  * for GitHub Actions.
+ *
+ * For the same reason, a policy cannot shorten the lifetime. A policy with a `maxLifetime` below
+ * `m2mAccessTokenExpiresIn` throws a `TypeError` when the plugin initializes, and
+ * `createTrustPolicy` rejects it with `BAD_REQUEST`.
  */
 export function tokenExchange(options: tokenExchange.Options = {}) {
   const jwks = Jwks.create({ fetch: options.fetch ?? globalThis.fetch })
@@ -67,8 +71,8 @@ export function tokenExchange(options: tokenExchange.Options = {}) {
       return typeof iss === 'string' ? iss : undefined
     })()
 
-    // Better Auth issues every access token of this grant for `lifetime`. A policy can only shorten it.
-    const lifetime = input.opts.m2mAccessTokenExpiresIn ?? 3600
+    // Better Auth issues every access token of this grant for `lifetime`. A policy cannot shorten it.
+    const lifetime = lifetimeOf(input.opts)
     // Read before verification, which caps `expiresAt` from a later clock reading.
     const now = Date.now()
     const result = await Subject.verify({
@@ -128,6 +132,12 @@ export function tokenExchange(options: tokenExchange.Options = {}) {
         { body: policySchema, metadata: { SERVER_ONLY: true }, method: 'POST' },
         async (context) => {
           const policy = context.body
+          const message = conflict(
+            policy,
+            lifetimeOf(context.context.getPlugin('oauth-provider')?.options ?? {}),
+          )
+          if (message) throw new APIError('BAD_REQUEST', { message })
+
           const row = await context.context.adapter.create<Omit<Row, 'id'>, Row>({
             data: { ...toRow(policy), id: policy.id } as Omit<Row, 'id'>,
             forceAllowId: true,
@@ -158,10 +168,17 @@ export function tokenExchange(options: tokenExchange.Options = {}) {
     },
     id: 'handshakes-token-exchange',
     init(context) {
-      if (!context.getPlugin('oauth-provider'))
+      const provider = context.getPlugin('oauth-provider')
+      if (!provider)
         throw new Error(
           'tokenExchange() requires oauthProvider(). Add `oauthProvider()` to the plugins before `tokenExchange()`.',
         )
+
+      for (const policy of options.policies ?? []) {
+        const message = conflict(policy, lifetimeOf(provider.options))
+        if (message) throw new TypeError(message)
+      }
+
       extendOAuthProvider(context, { grants: { [grantType]: handler } })
     },
     schema: {
@@ -184,9 +201,26 @@ export declare namespace tokenExchange {
   type Options = {
     /** Fetches the keys of subject token issuers. Default: `globalThis.fetch`. */
     fetch?: typeof globalThis.fetch | undefined
-    /** Policies in code, in addition to the `trustPolicy` table. Each must name a `clientId`. */
+    /**
+     * Policies in code, in addition to the `trustPolicy` table. Each must name a `clientId`. A
+     * `maxLifetime` below `m2mAccessTokenExpiresIn` throws a `TypeError` when the plugin initializes.
+     */
     policies?: readonly Policy.Policy[] | undefined
   }
+}
+
+/**
+ * Returns the reason that the plugin cannot apply `policy`, or `undefined`. Better Auth issues every
+ * access token of the grant for `lifetime`, so a shorter `maxLifetime` refuses every subject token.
+ */
+function conflict(policy: Policy.Policy, lifetime: number): string | undefined {
+  if (policy.maxLifetime === undefined || policy.maxLifetime >= lifetime) return undefined
+  return `The policy ${policy.id} sets \`maxLifetime\` to ${policy.maxLifetime} seconds, but Better Auth issues every access token of the exchange for \`m2mAccessTokenExpiresIn\`, ${lifetime} seconds. Remove \`maxLifetime\` from the policy, or set \`m2mAccessTokenExpiresIn\` to ${policy.maxLifetime} or less.`
+}
+
+/** Returns the lifetime of every access token of the grant, in seconds, with the Better Auth default. */
+function lifetimeOf(options: { m2mAccessTokenExpiresIn?: number | undefined }): number {
+  return options.m2mAccessTokenExpiresIn ?? 3600
 }
 
 /** A row of the `trustPolicy` table. */

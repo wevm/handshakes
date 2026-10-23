@@ -123,7 +123,7 @@ Better Auth issues every access token of the grant for `m2mAccessTokenExpiresIn`
 Set `m2mAccessTokenExpiresIn` below the lifetime of the shortest subject token, such as 300 seconds on GitHub Actions. Also set `accessTokenTtl` of each resource and each `scopeExpirations` entry at or below `m2mAccessTokenExpiresIn`. A longer lifetime fails the request.
 
 :::warning
-A policy with a `maxLifetime` below `m2mAccessTokenExpiresIn` refuses every subject token, since Better Auth cannot issue a shorter access token. Set no `maxLifetime` on a policy for this plugin, or set one at or above `m2mAccessTokenExpiresIn`.
+Better Auth cannot issue a shorter access token for a policy. So the plugin rejects a policy with a `maxLifetime` below `m2mAccessTokenExpiresIn`. `tokenExchange()` throws a `TypeError` for one in `policies`, and `createTrustPolicy` rejects one with `BAD_REQUEST`. Set no `maxLifetime` on a policy for this plugin. If `m2mAccessTokenExpiresIn` later rises above the `maxLifetime` of a stored policy, the plugin refuses every subject token of that policy.
 :::
 
 ## Recipes

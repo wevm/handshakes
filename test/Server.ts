@@ -21,6 +21,13 @@ export async function create(options: create.Options = {}): Promise<create.Retur
   if (!address || typeof address === 'string') throw new Error('Expected a TCP address.')
   const url = `http://127.0.0.1:${address.port}`
 
+  // Clients keep connections alive, so `close` ends them instead of waiting for them to idle.
+  const close = () =>
+    new Promise<void>((resolve, reject) => {
+      server.close((error) => (error ? reject(error) : resolve()))
+      server.closeAllConnections()
+    })
+
   const config = {
     basePath: '/',
     baseURL: url,
@@ -40,7 +47,7 @@ export async function create(options: create.Options = {}): Promise<create.Retur
       }),
       // The shortest interval keeps device grant tests fast. RFC 8628 defaults to 5 seconds.
       oauthDeviceAuthorization({ interval: '1s', verificationUri: '/device' }),
-      tokenExchange(),
+      tokenExchange({ policies: options.policies }),
     ],
     // A fixed secret is safe for a server that lives only for one test file.
     secret: 'handshakes-test-secret-handshakes-test-secret',
@@ -49,6 +56,12 @@ export async function create(options: create.Options = {}): Promise<create.Retur
   // The memory adapter needs every table of the configuration to exist before the first write.
   const tables = Object.fromEntries(Object.keys(getSchema(config)).map((name) => [name, []]))
   const auth = betterAuth({ ...config, database: memoryAdapter(tables) })
+
+  // Plugins initialize here, so an error of `init` rejects `create` and closes the server.
+  await auth.$context.catch(async (error: unknown) => {
+    await close()
+    throw error
+  })
 
   server.on('request', toNodeHandler(auth))
 
@@ -126,12 +139,7 @@ export async function create(options: create.Options = {}): Promise<create.Retur
       if (!approve.ok) throw new Error(`POST /device/approve returned HTTP ${approve.status}.`)
     },
     clientId: client.client_id,
-    // Clients keep connections alive, so `close` ends them instead of waiting for them to idle.
-    close: () =>
-      new Promise<void>((resolve, reject) => {
-        server.close((error) => (error ? reject(error) : resolve()))
-        server.closeAllConnections()
-      }),
+    close,
     confidentialClientId: confidentialClient.client_id,
     confidentialClientSecret,
     exchangeClientId: exchangeClient.client_id,
@@ -144,6 +152,8 @@ export async function create(options: create.Options = {}): Promise<create.Retur
 
 export declare namespace create {
   type Options = {
+    /** Policies in code, for `tokenExchange()`. */
+    policies?: readonly Policy.Policy[] | undefined
     /** RFC 8707 resource identifiers, which receive JWT access tokens. */
     resources?: readonly string[] | undefined
   }
