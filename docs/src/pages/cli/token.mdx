@@ -1,0 +1,124 @@
+# token [Prints an access token, or with --audience, a subject token]
+
+`handshakes token` resolves the access token of a profile and prints it. With `--audience`, it prints the subject token instead: the OIDC token that the platform signs for the running code, for an API that accepts it directly.
+
+```sh
+# Sends one request with the access token of the example profile
+curl -H "Authorization: Bearer $(handshakes token example)" https://api.example.com/v1/items
+```
+
+## Signature
+
+```sh
+# The access token of a profile, or the subject token for an audience
+handshakes token [profile] [options]
+handshakes token --audience <audience>
+```
+
+The access token follows the [resolution order](/cli): a subject token exchange, a stored grant, then the device grant in a terminal. With `--audience`, the command reads no profile and sends no token exchange.
+
+:::warning
+The output is a credential. Pass it through a command substitution or a pipe. Never write it to a log. [`exec`](/cli/exec) keeps the token out of the shell.
+:::
+
+## Arguments
+
+### profile
+
+- **Type:** `string`
+- **Default:** `HANDSHAKES_PROFILE`, else the `default` profile
+
+The name of a profile of the [configuration](/cli/configuration). With `--audience`, the CLI ignores it.
+
+```sh
+# Prints the access token of the default profile
+handshakes token
+```
+
+## Options
+
+### --audience
+
+- **Type:** `string`
+
+The `aud` of a subject token. The CLI requests the token from the first source that detects its platform, such as GitHub Actions, and prints it. The token must carry this audience.
+
+```sh
+# In GitHub Actions, prints the OIDC token of the job for the API
+handshakes token --audience https://api.example.com
+```
+
+A source with a fixed audience, such as GitLab CI or CircleCI, returns the audience that the platform configures. If that audience differs, the command exits with `AUDIENCE_MISMATCH`, and prints no token.
+
+### --client-id
+
+- **Type:** `string`
+- **Default:** `clientId` of the profile
+
+The OAuth client for the device grant and refresh.
+
+```sh
+# Uses this client for the stored grant
+handshakes token example --client-id example-cli
+```
+
+### --issuer
+
+- **Type:** `string`
+- **Default:** `issuer` of the profile
+
+The authorization server.
+
+```sh
+# In CI, exchanges the subject token without a configuration file
+handshakes token --issuer https://auth.example.com
+```
+
+### --resource
+
+- **Type:** `string`
+- **Default:** `resource` of the profile
+
+The RFC 8707 resource of the access token.
+
+```sh
+# Prints a token for one API
+handshakes token example --resource https://api.example.com
+```
+
+### --scope
+
+- **Type:** `string`
+- **Default:** `scope` of the profile
+
+The space-separated scopes of the access token.
+
+```sh
+# Prints a token that can write
+handshakes token example --scope data:write
+```
+
+## Output
+
+Without `--format`, the CLI prints the token alone, followed by a line break. With `--format`, such as `--json`, the CLI prints these fields:
+
+- **`expiresAt`:** When the token expires, in milliseconds since the epoch.
+- **`source`:** With `--audience`, the name of the source, such as `githubActions`. Else `null`.
+- **`value`:** The token.
+
+```sh
+# Prints the expiry of the token, and not the token
+handshakes token example --json --filter-output expiresAt
+```
+
+## Errors
+
+| Error code               | Exit code | Condition                                                                               |
+| ------------------------ | --------- | --------------------------------------------------------------------------------------- |
+| `NO_PROFILE`             | 2         | No profile applies and `--issuer` is not set, or the profile argument names no profile. |
+| `AUTHORIZATION_REQUIRED` | 3         | No source detects its platform, no grant is stored, and the device grant cannot run.    |
+| `SOURCE_NOT_FOUND`       | 3         | With `--audience`, no source detects its platform.                                      |
+| `REJECTED`               | 4         | The server rejects a request with `invalid_grant`.                                      |
+| `AUDIENCE_MISMATCH`      | 1         | With `--audience`, the token of the source carries another `aud`.                       |
+| `SOURCE_FAILED`          | 1         | With `--audience`, the detected source fails, such as a job without `id-token: write`.  |
+| `FAILED`                 | 1         | Another error, such as a rejected token exchange.                                       |

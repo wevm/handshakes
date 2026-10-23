@@ -1,0 +1,169 @@
+# tokenExchange [Returns the Better Auth plugin that adds the RFC 8693 token exchange]
+
+The plugin adds the token exchange grant to the token endpoint of `@better-auth/oauth-provider`. It verifies the subject token against trust policies, then Better Auth issues the access token through `issueTokens`. Trust policies come from the options and from a `trustPolicy` table.
+
+```ts [auth.ts]
+import { oauthProvider } from '@better-auth/oauth-provider'
+import { betterAuth } from 'better-auth'
+import { jwt } from 'better-auth/plugins/jwt'
+import { tokenExchange } from 'handshakes/better-auth'
+
+export const auth = betterAuth({
+  plugins: [
+    jwt(),
+    oauthProvider({
+      consentPage: '/consent',
+      loginPage: '/login',
+      // Shorter than the shortest subject token, such as 300 seconds on GitHub Actions
+      m2mAccessTokenExpiresIn: 240,
+      // Issues JWT access tokens with the `aud` of the API (RFC 8707)
+      resources: ['https://api.example.com'],
+    }),
+    tokenExchange(),
+  ],
+})
+```
+
+## Signature
+
+```ts
+// One plugin for one Better Auth instance
+tokenExchange(options)
+```
+
+## Parameters
+
+### options.fetch
+
+- **Type:** `typeof globalThis.fetch`
+- **Default:** `globalThis.fetch`
+
+Sends the requests for the keys of subject token issuers.
+
+```ts
+// Sends the key requests through a fetch with logs
+tokenExchange({ fetch: loggedFetch })
+```
+
+### options.policies
+
+- **Type:** `readonly Policy.Policy[]`
+- **Default:** `[]`
+
+Trust policies in code, in addition to the rows of the `trustPolicy` table. Each policy must name a `clientId`. [`Policy`](/api/server/policy) describes how a policy matches.
+
+```ts
+import { tokenExchange } from 'handshakes/better-auth'
+import { Policy } from 'handshakes/server'
+
+// Accepts the main branch of one repository for the `ci` client
+tokenExchange({
+  policies: [
+    Policy.githubActions({
+      audience: 'https://auth.example.com',
+      clientId: 'ci',
+      ref: 'refs/heads/main',
+      repositoryId: '812345',
+      scopes: ['data:read'],
+    }),
+  ],
+})
+```
+
+## Returns
+
+- **Type:** `BetterAuthPlugin`
+
+A plugin with the ID `handshakes-token-exchange`. Add it after `oauthProvider()`. Its `init` throws an `Error` when the plugins have no `oauthProvider()`.
+
+## Clients
+
+Each policy names the OAuth client that receives the issued token. The client must exist, must not be disabled, and must list `urn:ietf:params:oauth:grant-type:token-exchange` in its grant types. A public client (`token_endpoint_auth_method: none`) is valid, since the trust policy authorizes the request.
+
+```ts [clients.ts]
+import { auth } from './auth.js'
+
+// Registers a client for the token exchange only, as a signed-in administrator
+const client = await auth.api.adminCreateOAuthClient({
+  body: {
+    client_name: 'CI',
+    grant_types: ['urn:ietf:params:oauth:grant-type:token-exchange'],
+    scope: 'data:read',
+    skip_consent: true,
+    token_endpoint_auth_method: 'none',
+  },
+  headers,
+})
+```
+
+A request that names a `client_id` must name the client of the matched policy. Otherwise the request receives `invalid_grant`.
+
+## Lifetime
+
+Better Auth issues every access token of this grant for `m2mAccessTokenExpiresIn` seconds (default 3600), not for a lifetime per request. So the plugin refuses a subject token that expires before that lifetime ends.
+
+- **Subject token:** Set `m2mAccessTokenExpiresIn` below the lifetime of the shortest subject token, such as 240 seconds for a GitHub Actions token of 300 seconds.
+- **Policy:** A `maxLifetime` of a policy below `m2mAccessTokenExpiresIn` refuses every request of the policy, since the access token would outlive it.
+- **Resources and scopes:** Set the `accessTokenTtl` of each resource and each `scopeExpirations` entry at or below `m2mAccessTokenExpiresIn`. A longer one issues an access token that outlives the subject token, and the plugin throws an `Error` for it.
+
+## Trust Policy Table
+
+The plugin adds a `trustPolicy` table to the schema of Better Auth. Run the migration of Better Auth after the plugin is added.
+
+| Field         | Type       | Required           |
+| ------------- | ---------- | ------------------ |
+| `id`          | `string`   | Yes                |
+| `audience`    | `string`   | Yes                |
+| `claims`      | `json`     | Yes                |
+| `clientId`    | `string`   | Yes                |
+| `issuer`      | `string`   | Yes, with an index |
+| `maxLifetime` | `number`   | No                 |
+| `resources`   | `string[]` | No                 |
+| `scopes`      | `string[]` | Yes                |
+
+For each request, the plugin reads the rows whose `issuer` equals the `iss` of the subject token, and adds them to `options.policies`.
+
+## Endpoints
+
+The plugin adds three endpoints. Each is server-only, so code calls it through `auth.api`, and no HTTP request reaches it.
+
+| Endpoint            | Method and path              | Input            | Output            |
+| ------------------- | ---------------------------- | ---------------- | ----------------- |
+| `createTrustPolicy` | `POST /trust-policies`       | `body`: a policy | The stored policy |
+| `listTrustPolicies` | `GET /trust-policies`        | None             | Every policy      |
+| `deleteTrustPolicy` | `DELETE /trust-policies/:id` | `params.id`      | `deleted: true`   |
+
+`createTrustPolicy` validates the body. `audience`, `clientId`, `id`, and `issuer` are non-empty strings, `scopes` and `resources` are arrays of strings, `claims` maps at least one claim to a string or an array of strings, and `maxLifetime` is a positive number of seconds.
+
+```ts [policies.ts]
+import { Policy } from 'handshakes/server'
+import { auth } from './auth.js'
+
+// Stores a policy for the main branch of one repository
+await auth.api.createTrustPolicy({
+  body: Policy.githubActions({
+    audience: 'https://auth.example.com',
+    clientId: client.client_id,
+    ref: 'refs/heads/main',
+    repositoryId: '812345',
+    scopes: ['data:read'],
+  }),
+})
+
+// Lists the stored policies, then deletes one by its ID
+const policies = await auth.api.listTrustPolicies()
+await auth.api.deleteTrustPolicy({ params: { id: 'githubActions:812345:refs/heads/main' } })
+```
+
+## Token Requests
+
+A token exchange request goes to the token endpoint of the provider, such as `POST /oauth2/token` under the base path of Better Auth. The plugin reads `subject_token`, `subject_token_type`, `scope`, `resource`, `requested_token_type`, and `client_id`. The response is the token response of Better Auth, with `issued_token_type` set to `urn:ietf:params:oauth:token-type:access_token`.
+
+## Errors
+
+The plugin refuses a request with HTTP 400 and an RFC 6749 §5.2 error:
+
+- **`invalid_request`:** `requested_token_type` is not `urn:ietf:params:oauth:token-type:access_token`, `subject_token` is absent, or `subject_token_type` is not `urn:ietf:params:oauth:token-type:jwt` or `urn:ietf:params:oauth:token-type:id_token`.
+- **`invalid_grant`:** The subject token matches no policy, the policy names no client or another client than `client_id`, the client cannot use the grant, or the subject token expires before the access token.
+- **`invalid_scope`:** `scope` holds a scope that the policy does not list.
+- **`invalid_target`:** `resource` names a resource that the policy does not list.

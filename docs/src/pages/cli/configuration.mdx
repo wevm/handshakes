@@ -1,0 +1,159 @@
+# Configuration [Names the authorization server and the client of each profile]
+
+A profile holds the client settings for one API. The CLI reads profiles from JSON files, and each command that takes a profile builds its client from one.
+
+```json [handshakes.json]
+{
+  "default": "example",
+  "profiles": {
+    "example": {
+      "clientId": "example-cli",
+      "env": "EXAMPLE_API_KEY",
+      "issuer": "https://auth.example.com",
+      "scope": "data:read"
+    }
+  }
+}
+```
+
+```sh
+# Uses the default profile, example
+handshakes token
+```
+
+## Files
+
+The CLI reads two files, project first:
+
+1. `handshakes.json` in the working directory, or in the nearest ancestor directory that holds one.
+2. `$XDG_CONFIG_HOME/handshakes/config.json`. Without `XDG_CONFIG_HOME`, the CLI reads `~/.config/handshakes/config.json`.
+
+A profile of the project file replaces a profile of the same name in the user file. The `default` of the project file also replaces the `default` of the user file.
+
+If `HANDSHAKES_CONFIG` names a file, the CLI reads only that file.
+
+```sh
+# Reads the profiles of one file, and no other
+HANDSHAKES_CONFIG=./ci/handshakes.json handshakes profiles
+```
+
+## Profile Selection
+
+The CLI selects the profile in this order:
+
+1. The profile argument, such as `example` in `handshakes token example`.
+2. The `HANDSHAKES_PROFILE` environment variable.
+3. The `default` key of the files.
+
+An unknown name in the profile argument exits with code 2 and `NO_PROFILE`. An unknown name in `HANDSHAKES_PROFILE` or `default` selects no profile. Then only the [shared options](/cli) apply, and a command that needs a profile exits with `NO_PROFILE` unless `--issuer` is set.
+
+```sh
+# Selects the example profile for every command of the shell
+export HANDSHAKES_PROFILE=example
+handshakes status
+```
+
+## Fields
+
+The CLI accepts these fields in each profile. It ignores other fields.
+
+### clientId
+
+- **Type:** `string`
+- **Default:** `undefined`
+
+The OAuth client for the device grant and refresh. A device (such as a laptop) needs it. A CI job that exchanges a subject token does not.
+
+```json
+{ "clientId": "example-cli" }
+```
+
+### endpoints
+
+- **Type:** `{ deviceAuthorization?: string, revocation?: string, token: string }`
+- **Default:** `undefined`
+
+Explicit endpoints, for a server without RFC 8414 metadata. A profile needs `issuer` or `endpoints`. Without `endpoints.deviceAuthorization`, the device grant cannot run.
+
+```json
+{ "endpoints": { "token": "https://auth.example.com/oauth2/token" } }
+```
+
+### env
+
+- **Type:** `string`
+- **Default:** `undefined`
+
+The environment variable that [`exec`](/cli/exec) sets to the access token. Without it, `exec` sets `HANDSHAKES_TOKEN`. The name must be in uppercase, and `exec` refuses a variable that changes how a program runs, such as `NODE_OPTIONS`.
+
+```json
+{ "env": "EXAMPLE_API_KEY" }
+```
+
+### issuer
+
+- **Type:** `string`
+- **Default:** `undefined`
+
+The authorization server. The CLI reads its endpoints from its metadata (RFC 8414, else OpenID Connect Discovery), once per run.
+
+```json
+{ "issuer": "https://auth.example.com" }
+```
+
+### resource
+
+- **Type:** `string`
+- **Default:** `undefined`
+
+The RFC 8707 resource of the access token, such as the API. [`fetch`](/cli/fetch) sends the token only to URLs at or below the resource. Without a resource, `fetch` sends the token only to the origin of the issuer.
+
+```json
+{ "resource": "https://api.example.com" }
+```
+
+### scope
+
+- **Type:** `string`
+- **Default:** `undefined`
+
+The space-separated scopes of the access token.
+
+```json
+{ "scope": "data:read" }
+```
+
+## Flags
+
+The [shared options](/cli) replace the fields of the selected profile for one run: `--client-id`, `--issuer`, `--resource`, and `--scope`. The flags cannot set `endpoints` or `env`.
+
+```sh
+# Replaces the scope of the example profile for this run
+handshakes token example --scope data:write
+```
+
+Without a profile, `--issuer` alone is enough for the commands that need one.
+
+```sh
+# Runs the device grant without a configuration file
+handshakes authorize --issuer https://auth.example.com --client-id example-cli
+```
+
+## Errors
+
+| Condition                                 | Error code   | Exit code |
+| ----------------------------------------- | ------------ | --------- |
+| The profile argument names no profile.    | `NO_PROFILE` | 2         |
+| A file does not match the profile schema. | `NO_PROFILE` | 2         |
+| A file is not valid JSON.                 | `FAILED`     | 1         |
+
+## Grants
+
+The CLI keeps each grant in a file of [`Store.file`](/api/node/store/file), so every process of the user shares it. The directory is `$XDG_CONFIG_HOME/handshakes/grants`, else `~/.config/handshakes/grants`.
+
+```sh
+# Lists the grant files, one for each issuer, client, resource, and token endpoint
+ls ~/.config/handshakes/grants
+```
+
+Each file has mode 0600. A grant serves one issuer, client, resource, and token endpoint, so a profile with another resource never reads it. The CLI refreshes a grant under a lock that covers every process.

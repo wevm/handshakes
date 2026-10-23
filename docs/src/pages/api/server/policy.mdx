@@ -1,0 +1,141 @@
+# Policy [Trust policies that map a subject token to scopes and a lifetime]
+
+A trust policy is a server rule. It names an issuer, an audience, and the claims of the workloads that it accepts, and the scopes and lifetime of the credential that they receive. `Server`, `Resource`, and the Better Auth adapter take the same `Policy` type.
+
+```ts [policies.ts]
+import { Policy } from 'handshakes/server'
+
+export const policies = [
+  // The main branch of one repository reads data
+  Policy.githubActions({
+    audience: 'https://auth.example.com',
+    ref: 'refs/heads/main',
+    repositoryId: '812345',
+    scopes: ['data:read'],
+  }),
+  // Production deployments of one Vercel project read and write data
+  Policy.vercel({
+    audience: 'https://auth.example.com',
+    environment: 'production',
+    ownerId: 'team_acme',
+    projectId: 'prj_app',
+    scopes: ['data:read', 'data:write'],
+    team: 'acme',
+  }),
+]
+```
+
+## Fields
+
+- **`audience`:** The exact `aud` that the subject token must carry.
+- **`claims`:** Exact claim matches. An array matches any of its values.
+- **`clientId`:** The OAuth client that receives the issued token. The Better Auth adapter requires it.
+- **`id`:** The identifier of the policy.
+- **`issuer`:** The exact `iss` of the subject token. The keys come from its discovery document.
+- **`maxLifetime`:** The longest lifetime of the issued credential, in seconds. The credential also expires no later than the subject token. Default: the lifetime that the server sets.
+- **`resources`:** The RFC 8707 resources that a request may name. A request for another resource receives `invalid_target`. Default: none, so a request that names a resource is refused.
+- **`scopes`:** The scopes of the issued credential. A request may ask for a subset.
+
+## Matching
+
+A policy matches a subject token when every rule holds:
+
+- **Issuer:** `iss` equals `issuer`.
+- **Audience:** One of the `aud` values equals `audience`.
+- **Claims:** Each claim of `claims` equals the claim of the token, or one of its values for an array. A number in the token compares as a string, so `repository_id: 812345` matches `'812345'`. A claim that is absent, or not a string or number, never matches.
+- **Signature and time:** The signature verifies with a key of the issuer, `exp` is in the future, and `nbf` is at most 60 seconds ahead.
+
+A policy needs at least one claim, since a policy without claims would match every token of its issuer, such as every repository on GitHub. `Server.create` and `Resource.create` throw a `TypeError` for it.
+
+```ts
+import { Policy } from 'handshakes/server'
+
+// Accepts two repositories through one policy
+Policy.from({
+  audience: 'https://auth.example.com',
+  claims: { repository_id: ['812345', '812346'] },
+  id: 'ci-readers',
+  issuer: 'https://token.actions.githubusercontent.com',
+  scopes: ['data:read'],
+})
+```
+
+## Stable Identifiers
+
+Match claims that cannot change, such as `repository_id`, `owner_id`, and `project_id`. Never match names, such as `repository` or `project`. After a rename or a deletion, another repository can take the name. An identifier never passes to another repository. The presets below match identifiers only.
+
+## Policy.githubActions
+
+Returns a policy for GitHub Actions. It matches `repository_id`, never the name of the repository.
+
+```ts
+import { Policy } from 'handshakes/server'
+
+// Accepts the production deployments of one repository
+Policy.githubActions({
+  audience: 'https://auth.example.com',
+  environment: 'production',
+  repositoryId: '812345',
+  scopes: ['data:write'],
+})
+```
+
+- **`audience`:** The `aud` that the job requests. Required.
+- **`clientId`:** The OAuth client that receives the issued token.
+- **`environment`:** The GitHub deployment environment of the job, such as `production`. Adds the `environment` claim.
+- **`id`:** Default: `githubActions:<repositoryId>:<ref>`, with `*` when `ref` is not set.
+- **`issuer`:** Default: `https://token.actions.githubusercontent.com`.
+- **`maxLifetime`:** In seconds.
+- **`ref`:** The Git ref of the job, such as `refs/heads/main`. Adds the `ref` claim. Default: any ref.
+- **`repositoryId`:** The `repository_id` of the repository, which stays the same after a rename. Required.
+- **`resources`:** The RFC 8707 resources that a request may name.
+- **`scopes`:** The scopes of the issued credential. Required.
+
+## Policy.vercel
+
+Returns a policy for Vercel. It matches `owner_id` and `project_id`, never the name of the team or the project. Without `environment`, preview and production deployments match alike.
+
+```ts
+import { Policy } from 'handshakes/server'
+
+// Accepts preview deployments of one project, from the team issuer
+Policy.vercel({
+  audience: 'https://auth.example.com',
+  environment: 'preview',
+  ownerId: 'team_acme',
+  projectId: 'prj_app',
+  scopes: ['data:read'],
+  team: 'acme',
+})
+```
+
+- **`audience`:** The `aud` that the deployment requests. Required.
+- **`clientId`:** The OAuth client that receives the issued token.
+- **`environment`:** `development`, `preview`, `production`, or a custom environment. Adds the `environment` claim. Default: any.
+- **`id`:** Default: `vercel:<projectId>:<environment>`, with `*` when `environment` is not set.
+- **`issuer`:** Default: `https://oidc.vercel.com/<team>`, the team issuer.
+- **`maxLifetime`:** In seconds.
+- **`ownerId`:** The `owner_id` of the team. Required.
+- **`projectId`:** The `project_id` of the project. Required.
+- **`resources`:** The RFC 8707 resources that a request may name.
+- **`scopes`:** The scopes of the issued credential. Required.
+- **`team`:** The slug of the team, for the team issuer.
+
+`Policy.vercel` throws a `TypeError` when neither `team` nor `issuer` is set.
+
+## Policy.from
+
+Returns `policy` unchanged, typed as a policy. Use it for an issuer without a preset, such as GitLab or a Kubernetes cluster.
+
+```ts
+import { Policy } from 'handshakes/server'
+
+// Accepts the main branch of one GitLab project, by its ID
+Policy.from({
+  audience: 'https://auth.example.com',
+  claims: { project_id: '812345', ref: 'main', ref_type: 'branch' },
+  id: 'gitlab:812345:main',
+  issuer: 'https://gitlab.com',
+  scopes: ['data:read'],
+})
+```

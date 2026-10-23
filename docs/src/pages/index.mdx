@@ -1,0 +1,84 @@
+---
+description: Short-lived OAuth tokens for workloads and CLIs, in place of stored API keys.
+layout: minimal
+outline: false
+title: Handshakes
+---
+
+import { Card, Cards, HomePage } from 'vocs'
+
+<HomePage.Root>
+  <HomePage.Logo />
+  <HomePage.Tagline>
+    {'Short-lived OAuth tokens for workloads and CLIs, in place of stored API keys'}
+  </HomePage.Tagline>
+  <HomePage.Description>
+    {
+      'In CI and on servers, Handshakes exchanges the OIDC token of the platform for an access token. On a device (such as a laptop), it runs the device grant once and refreshes the grant.'
+    }
+  </HomePage.Description>
+  <HomePage.Buttons>
+    <HomePage.Button href="/introduction/getting-started" variant="accent">
+      {'Get Started'}
+    </HomePage.Button>
+    <HomePage.Button href="https://github.com/wevm/handshakes">GitHub</HomePage.Button>
+  </HomePage.Buttons>
+  <HomePage.InstallPackage name="handshakes" />
+</HomePage.Root>
+
+## Overview
+
+The client below runs in a GitHub Actions job and stores no secret. It exchanges the OIDC token of the job at OpenRouter for a key that expires in 15 minutes or less.
+
+```ts [summarize.ts]
+import { createOpenRouter } from '@openrouter/ai-sdk-provider'
+import { generateText } from 'ai'
+import { Client } from 'handshakes'
+
+// Exchanges the OIDC token of the platform at OpenRouter (RFC 8693).
+const client = Client.create({
+  endpoints: { token: 'https://openrouter.ai/api/v1/oauth/token' },
+  // Names the federation policy, which maps the subject token to an OpenRouter API key.
+  parameters: { federation_policy_id: '<policy id>' },
+  // `aud` of the subject token. Equals the audience of the policy.
+  subjectAudience: 'https://openrouter.ai',
+})
+
+// Replaces `OPENROUTER_API_KEY`. Expires no later than the subject token.
+const token = await client.token()
+const openrouter = createOpenRouter({ apiKey: token.value })
+
+const { text } = await generateText({
+  model: openrouter('anthropic/claude-sonnet-4.5'),
+  prompt: 'Summarize the release notes.',
+})
+```
+
+## Documentation
+
+<Cards>
+  <Card
+    title="Introduction"
+    description="The roles, the terms, and the order in which a client resolves a token."
+    icon="book-open"
+    to="/introduction/getting-started"
+  />
+  <Card
+    title="Guides"
+    description="Token exchange, the device grant, a token endpoint, and token verification."
+    icon="map"
+    to="/guides/token-exchange"
+  />
+  <Card
+    title="API Reference"
+    description="Every module of `handshakes`, `handshakes/node`, `handshakes/server`, and more."
+    icon="braces"
+    to="/api/core"
+  />
+  <Card
+    title="CLI Reference"
+    description="Commands that print tokens, run commands, and send requests."
+    icon="terminal"
+    to="/cli"
+  />
+</Cards>

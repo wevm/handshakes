@@ -1,0 +1,211 @@
+# Testing [Tests clients and servers against real signed tokens, with no mocks]
+
+## Overview
+
+`Issuer` from `handshakes/test` is a local OIDC issuer for integration tests. It signs real RS256 tokens with the claims of a platform. It also serves the endpoints that the platform sources call, so the sources run unchanged against it.
+
+The issuer serves its discovery document and its keys. `Server` and `Resource` verify its tokens exactly as they verify the tokens of a real platform. No test stubs `fetch` or another global.
+
+## Walkthrough
+
+### Start an Issuer
+
+`Issuer.create` starts a server on a random port of `127.0.0.1`. `issuer.url` is its origin, and also the `iss` of its tokens. `close` stops the server.
+
+```ts [setup.ts]
+import { Issuer } from 'handshakes/test'
+
+// Starts the issuer before the tests, and stops it after them.
+let issuer: Issuer.Issuer
+
+beforeAll(async () => {
+  issuer = await Issuer.create()
+})
+
+afterAll(async () => {
+  await issuer.close()
+})
+```
+
+### Presets
+
+A preset copies the claims of one platform, with fixed sample values. `env` returns the environment variables that make the source of the preset request tokens from the issuer.
+
+| Preset          | Sample claims                                               | Variables of `env`                                                                 |
+| --------------- | ----------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| `githubActions` | `repository_id: '812345'`, `ref: 'refs/heads/main'`         | `GITHUB_ACTIONS`, `ACTIONS_ID_TOKEN_REQUEST_URL`, `ACTIONS_ID_TOKEN_REQUEST_TOKEN` |
+| `vercel`        | `owner_id: 'team_acme'`, `project_id: 'prj_app'`            | `VERCEL`, `VERCEL_OIDC_TOKEN`                                                      |
+| `gitlab`        | `project_id: '812345'`, `ref: 'main'`                       | `GITLAB_CI`, and the `id_tokens` variable of the audience                          |
+| `circleci`      | `oidc.circleci.com/project-id`, `oidc.circleci.com/vcs-ref` | `CIRCLECI`, `CIRCLE_OIDC_TOKEN_V2`                                                 |
+| `gcp`           | `email: 'ci@acme.iam.gserviceaccount.com'`                  | `K_SERVICE`, `GCE_METADATA_HOST`                                                   |
+
+For `circleci`, `gitlab`, and `vercel`, the environment holds the token itself. `audience` of `env` sets its `aud`. For `githubActions` and `gcp`, the source requests each token from the issuer, for any audience.
+
+### Test a Source
+
+`env` replaces `process.env` for one call. The source sends its real request to the issuer.
+
+```ts [Identity.test.ts]
+import { Identity } from 'handshakes'
+
+test('returns the subject token of the job', async () => {
+  // The environment of a GitHub Actions job whose token requests reach the issuer.
+  const env = await issuer.env({ preset: 'githubActions' })
+
+  const token = await Identity.token({ audience: 'https://auth.example.com', env })
+
+  expect(token.source).toBe('githubActions')
+  expect(token.claims['repository_id']).toBe('812345')
+})
+```
+
+### Test a Server
+
+`sign` returns a token with the claims of a preset. A policy names `issuer.url` as its issuer, in place of the platform. The test sends the request to `server.fetch` directly.
+
+```ts [Server.test.ts]
+import { Policy, Server } from 'handshakes/server'
+
+test('exchanges a subject token that matches the policy', async () => {
+  const server = Server.create({
+    issue: async (context) => ({ accessToken: 'key_1', expiresAt: context.expiresAt }),
+    issuer: 'https://auth.example.com',
+    // Trusts the tokens of the local issuer instead of GitHub.
+    policies: [
+      Policy.githubActions({
+        audience: 'https://auth.example.com',
+        issuer: issuer.url,
+        repositoryId: '812345',
+        scopes: ['data:read'],
+      }),
+    ],
+  })
+  const subjectToken = await issuer.sign({
+    audience: 'https://auth.example.com',
+    preset: 'githubActions',
+  })
+
+  const response = await server.fetch(
+    new Request('https://auth.example.com/oauth2/token', {
+      body: new URLSearchParams({
+        grant_type: 'urn:ietf:params:oauth:grant-type:token-exchange',
+        subject_token: subjectToken,
+        subject_token_type: 'urn:ietf:params:oauth:token-type:jwt',
+      }),
+      method: 'POST',
+    }),
+  )
+
+  expect(response.status).toBe(200)
+})
+```
+
+The server fetches the keys of the issuer over HTTP, as it does for a real platform.
+
+### Test a Resource
+
+```ts [Resource.test.ts]
+import { Policy, Resource } from 'handshakes/server'
+
+test('accepts a Vercel token of the project', async () => {
+  // Accepts the tokens of the local issuer with the claims of one Vercel project.
+  const resource = Resource.create({
+    policies: [
+      Policy.vercel({
+        audience: 'https://api.example.com',
+        issuer: issuer.url,
+        ownerId: 'team_acme',
+        projectId: 'prj_app',
+        scopes: ['data:read'],
+      }),
+    ],
+    resource: 'https://api.example.com',
+  })
+  const token = await issuer.sign({ audience: 'https://api.example.com', preset: 'vercel' })
+
+  const result = await resource.verify(
+    new Request('https://api.example.com/v1/items', {
+      headers: { authorization: `Bearer ${token}` },
+    }),
+  )
+
+  expect(result.status).toBe('valid')
+})
+```
+
+## Recipes
+
+### Refused Tokens
+
+`sign` takes `claims`, which replace or add to the claims of the preset, and `expiresIn`, in seconds. The default lifetime is 300 seconds. A second issuer signs with other keys.
+
+```ts [Server.test.ts]
+// Another repository, which the policy does not name.
+const foreign = await issuer.sign({
+  audience: 'https://auth.example.com',
+  claims: { repository_id: '999999' },
+  preset: 'githubActions',
+})
+
+// A token that expired a minute ago.
+const expired = await issuer.sign({
+  audience: 'https://auth.example.com',
+  expiresIn: -60,
+  preset: 'githubActions',
+})
+```
+
+The server refuses each with `400` and `invalid_grant`.
+
+### Vercel Exchange
+
+The issuer also serves the audience exchange of Vercel at `/vercel/token`. `Source.vercel` calls `https://oidc.vercel.com/~token` by default, so point `exchangeUrl` at the issuer.
+
+```ts [Source.test.ts]
+import { Identity, Source } from 'handshakes'
+
+test('exchanges the Vercel token for another audience', async () => {
+  // The environment holds a token for `https://vercel.com/acme`.
+  const env = await issuer.env({ preset: 'vercel' })
+
+  const token = await Identity.token({
+    audience: 'https://api.example.com',
+    env,
+    sources: [Source.vercel({ exchangeUrl: `${issuer.url}/vercel/token` })],
+  })
+
+  expect(token.claims['aud']).toBe('https://api.example.com')
+})
+```
+
+### Client and Server
+
+`Client.create` takes `env` and `fetch`, so a test runs the full exchange in one process. Route the requests for the authorization server to `server.fetch`. Other requests, such as the token request of the source, reach the issuer over HTTP.
+
+```ts [Client.test.ts]
+import { Client } from 'handshakes'
+
+test('exchanges the subject token of the job', async () => {
+  const client = Client.create({
+    env: await issuer.env({ preset: 'githubActions' }),
+    // Sends the requests for auth.example.com to `server`, the result of `Server.create`.
+    fetch: (input, init) => {
+      const request = new Request(input, init)
+      if (new URL(request.url).origin === 'https://auth.example.com') return server.fetch(request)
+      return fetch(request)
+    },
+    issuer: 'https://auth.example.com',
+  })
+
+  const token = await client.token()
+
+  expect(token.method).toBe('exchange')
+})
+```
+
+## More
+
+- **Function:** [`Issuer.create`](/api/test/issuer/create) lists the options of `sign` and `env`.
+- **Server:** [Authorization Server](/guides/authorization-server) describes the exchange that the tests verify.
+- **API:** [Token Verification](/guides/token-verification) describes the checks of `Resource`.
+- **Sources:** [Subject Tokens](/guides/subject-tokens) describes the sources that the presets serve.

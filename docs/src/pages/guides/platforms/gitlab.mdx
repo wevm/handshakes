@@ -1,0 +1,116 @@
+# GitLab CI [Exchanges the ID token that a pipeline job declares]
+
+## Overview
+
+GitLab CI signs an ID token for each entry under `id_tokens` in `.gitlab-ci.yml`. This token is the subject token: the JWT that the platform signs for the running code. The file fixes its audience, and GitLab puts the token in a variable of the job.
+
+`Source.gitlab` reads that variable. It sends no request, so the token must already carry the requested audience. The client then exchanges the subject token at the authorization server (RFC 8693 token exchange), and a trust policy on the server matches its claims.
+
+| Audience                  | Variable                                                        |
+| ------------------------- | --------------------------------------------------------------- |
+| Fixed in `.gitlab-ci.yml` | `<AUD>_ID_TOKEN`, else the `variable` option of `Source.gitlab` |
+
+## Walkthrough
+
+:::steps
+
+### Declare the Token
+
+Declare an ID token whose `aud` is the issuer of the authorization server. The default variable name is the audience in uppercase, with `_` for every other character, then `_ID_TOKEN`. A shorter name needs the `variable` option.
+
+```yaml [.gitlab-ci.yml]
+test:
+  # GitLab signs a token with this `aud`, and sets it in HANDSHAKES_ID_TOKEN.
+  id_tokens:
+    HANDSHAKES_ID_TOKEN:
+      aud: https://auth.example.com
+  script:
+    - pnpm install
+    - pnpm test
+```
+
+### Create the Client
+
+Name the variable in `Source.gitlab`. `Source.gitlab` detects the job when `GITLAB_CI` is `true`. The client requests the audience `subjectAudience`, else `issuer`, and compares it with the `aud` of the token before it sends the token.
+
+```ts [test/api.test.ts]
+import { Client, Source } from 'handshakes'
+
+const client = Client.create({
+  // Equals the `aud` of the ID token in .gitlab-ci.yml.
+  issuer: 'https://auth.example.com',
+  scope: 'data:read',
+  sources: [Source.gitlab({ variable: 'HANDSHAKES_ID_TOKEN' })],
+})
+
+const response = await client.fetch('https://api.example.com/v1/items')
+```
+
+Without `variable`, the source reads `HTTPS___AUTH_EXAMPLE_COM_ID_TOKEN` for the audience `https://auth.example.com`.
+
+### Add a Policy
+
+GitLab has no preset, so write the policy with `Policy.from`. Match `project_id`, which stays the same after a rename or a move. Do not match `project_path` alone, since a new project can take the path again.
+
+```ts [server.ts]
+import { Policy, Server } from 'handshakes/server'
+
+const server = Server.create({
+  // `keys` stands for the API key store of the host.
+  issue: async (context) => ({
+    accessToken: await keys.mint({ expiresAt: context.expiresAt, scopes: context.scopes }),
+    expiresAt: context.expiresAt,
+  }),
+  issuer: 'https://auth.example.com',
+  policies: [
+    Policy.from({
+      audience: 'https://auth.example.com',
+      // Accepts jobs of the main branch of one project.
+      claims: { project_id: '812345', ref: 'main', ref_type: 'branch' },
+      id: 'gitlab:812345:main',
+      issuer: 'https://gitlab.com',
+      scopes: ['data:read'],
+    }),
+  ],
+})
+
+export default { fetch: server.fetch }
+```
+
+:::
+
+## Recipes
+
+### Self-Managed GitLab
+
+A self-managed instance signs tokens with its own URL as `iss`. Set `issuer` in the policy to that URL. The server fetches the keys from the discovery document of the issuer, so the instance must serve it at an address that the server reaches.
+
+```ts [server.ts]
+import { Policy } from 'handshakes/server'
+
+const policy = Policy.from({
+  audience: 'https://auth.example.com',
+  claims: { project_id: '812345' },
+  id: 'gitlab:812345',
+  // The URL of the instance, as in `CI_SERVER_URL`.
+  issuer: 'https://gitlab.acme.com',
+  scopes: ['data:read'],
+})
+```
+
+### Common Failures
+
+`Source.RequestError` and `Identity.AudienceError` state the steps that resolve them.
+
+| Error                             | Step                                                                                                                                                         |
+| --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `HANDSHAKES_ID_TOKEN is not set.` | Declare `HANDSHAKES_ID_TOKEN` under `id_tokens` in .gitlab-ci.yml, with `aud: https://auth.example.com`.                                                     |
+| `Identity.AudienceError`          | Configure the platform to issue the token for the requested audience, such as `id_tokens` in .gitlab-ci.yml. Or request the audience that the token carries. |
+
+## More
+
+- [Token Exchange](/guides/token-exchange)
+- [Authorization Server](/guides/authorization-server)
+- [Source](/api/core/source)
+- [Policy](/api/server/policy)
+- [GitLab ID token documentation](https://docs.gitlab.com/ci/secrets/id_token_authentication/)

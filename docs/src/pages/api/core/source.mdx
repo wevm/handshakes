@@ -1,0 +1,218 @@
+# Source [Platforms that sign an OIDC token for the running code]
+
+A source detects one platform from environment variables, and returns the subject token that the platform signs for the running code. [`Identity.token`](/api/core/identity/token) and [`Client.create`](/api/core/client/create) use the first source that detects its platform. A detected source that fails throws, and the next source is never tried, since that can select a different identity.
+
+```ts [example.ts]
+import { Identity, Source } from 'handshakes'
+
+// [!code hl:2]
+// Checks GitHub Actions, then GitLab CI, in this order
+const sources = [Source.githubActions(), Source.gitlab()]
+
+const token = await Identity.token({ audience: 'https://auth.example.com', sources })
+```
+
+`handshakes/node` adds two sources that use the file system or a child process: [`Source.buildkite`](/api/node/source/buildkite) and [`Source.file`](/api/node/source/file).
+
+## Factories
+
+The factories below follow the order of `Source.defaults`, which is the order of detection.
+
+| Factory                  | Detects                                                           | Request                                                                                     | Audience                   |
+| ------------------------ | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------- | -------------------------- |
+| `Source.vercel()`        | `VERCEL=1`, `VERCEL_OIDC_TOKEN`, or a request of Vercel Functions | The token of the request, else `VERCEL_OIDC_TOKEN`. Another audience is exchanged at Vercel | Any                        |
+| `Source.githubActions()` | `GITHUB_ACTIONS=true`                                             | `GET` of `ACTIONS_ID_TOKEN_REQUEST_URL` with `audience`                                     | Any                        |
+| `Source.gitlab()`        | `GITLAB_CI=true`                                                  | Reads the variable that `id_tokens` declares                                                | Fixed in `.gitlab-ci.yml`  |
+| `Source.circleci()`      | `CIRCLECI=true`                                                   | Reads `CIRCLE_OIDC_TOKEN_V2`                                                                | Fixed: the organization ID |
+| `Source.gcp()`           | `K_SERVICE`, which Cloud Run and Cloud Functions set              | `GET` of the metadata server with `audience`                                                | Any                        |
+
+`Identity.token` decodes every token, and compares its `aud` with the requested audience. A mismatch throws `Identity.AudienceError`, and the token is not returned. This check protects a source with a fixed audience most, since its platform sets the audience.
+
+### Source.vercel
+
+- **Type:** `(options?: Source.vercel.Options) => Source.Source`
+
+Vercel. Inside a request of Vercel Functions, it reads the `x-vercel-oidc-token` header of that request. Elsewhere, it reads `VERCEL_OIDC_TOKEN`, which `vercel env pull` writes for local development.
+
+If the `aud` of the token equals the requested audience, the source returns the token unchanged. Otherwise it sends the token and the audience to Vercel, and returns the token of the response, with the requested `aud`.
+
+```ts
+// Exchanges the token of the deployment for one with the audience of the authorization server
+Identity.token({ audience: 'https://auth.example.com', sources: [Source.vercel()] })
+```
+
+#### options.exchangeUrl
+
+- **Type:** `string`
+- **Default:** `'https://oidc.vercel.com/~token'`
+
+The endpoint that exchanges a token for another audience. The request is a `POST` with a JSON body of `aud` and `token`, and the response holds the new `token`.
+
+```ts
+// Sends the audience exchange to another endpoint, such as a test issuer
+Source.vercel({ exchangeUrl: 'http://127.0.0.1:8787/~token' })
+```
+
+### Source.githubActions
+
+- **Type:** `() => Source.Source`
+
+GitHub Actions. It requests a token from the runner for any audience: a `GET` of `ACTIONS_ID_TOKEN_REQUEST_URL` with the `audience` query parameter and `ACTIONS_ID_TOKEN_REQUEST_TOKEN` as the bearer token. The runner sets both variables only for a job with `permissions: id-token: write`.
+
+```yaml
+# Lets the job request OIDC tokens from the runner
+permissions:
+  contents: read
+  id-token: write
+```
+
+### Source.gitlab
+
+- **Type:** `(options?: Source.gitlab.Options) => Source.Source`
+
+GitLab CI. It reads the token that `id_tokens` in `.gitlab-ci.yml` declares. The audience is fixed in that file, so the token must already carry the requested audience.
+
+```yaml
+# Declares the token for the audience https://auth.example.com
+job:
+  id_tokens:
+    HTTPS___AUTH_EXAMPLE_COM_ID_TOKEN:
+      aud: https://auth.example.com
+```
+
+#### options.variable
+
+- **Type:** `string`
+- **Default:** `<AUD>_ID_TOKEN`
+
+The variable that holds the token. The default name is the audience in uppercase, with `_` for every character other than a letter or a digit, and for a leading digit. So `https://auth.example.com` reads `HTTPS___AUTH_EXAMPLE_COM_ID_TOKEN`.
+
+```ts
+// Reads the token from a variable with a shorter name
+Source.gitlab({ variable: 'AUTH_ID_TOKEN' })
+```
+
+### Source.circleci
+
+- **Type:** `() => Source.Source`
+
+CircleCI. It reads `CIRCLE_OIDC_TOKEN_V2`, whose `aud` is the ID of the CircleCI organization. For another audience, run `circleci run oidc get` in the job, write the token to a file, and read it with [`Source.file`](/api/node/source/file).
+
+```ts
+// The audience is the ID of the CircleCI organization
+Identity.token({ audience: '<organization id>', sources: [Source.circleci()] })
+```
+
+### Source.gcp
+
+- **Type:** `(options?: Source.gcp.Options) => Source.Source`
+
+Google Cloud. It requests an identity token for any audience from the metadata server: a `GET` of `/computeMetadata/v1/instance/service-accounts/default/identity` with `audience` and `format=full`, and the header `Metadata-Flavor: Google`.
+
+The source detects Cloud Run and Cloud Functions through `K_SERVICE`. Compute Engine and GKE set no such variable, so `Source.gcp()` does not detect them, even in `sources`. On those platforms, list a copy whose `detect` returns `true`:
+
+```ts
+import { Client, Source } from 'handshakes'
+
+// [!code hl:2]
+// Compute Engine and GKE set no variable to detect, so this copy always detects
+const gcp = Source.from({ ...Source.gcp(), detect: () => true })
+
+const client = Client.create({ issuer: 'https://auth.example.com', sources: [gcp] })
+```
+
+#### options.metadataHost
+
+- **Type:** `string`
+- **Default:** `GCE_METADATA_HOST`, else `'metadata.google.internal'`
+
+The host of the metadata server.
+
+```ts
+// Requests tokens from a metadata server on another host
+Source.gcp({ metadataHost: '169.254.169.254' })
+```
+
+## Source.defaults
+
+- **Type:** `readonly Source.Source[]`
+
+The default sources, in priority order: `vercel`, `githubActions`, `gitlab`, `circleci`, then `gcp`. The order is observable, since the first detected source wins. `Source.defaults` of `handshakes/node` adds `buildkite` before `gcp`.
+
+```ts
+import { Identity, Source } from 'handshakes'
+
+// [!code hl:2]
+// Names the first source that detects its platform here, if any
+const source = Identity.detect({ sources: Source.defaults })
+```
+
+## Source.from
+
+- **Type:** `(source: Source.Source) => Source.Source`
+
+Returns `source` unchanged, typed as a source. A custom source supplies the token of another platform. Its `detect` reads environment variables only, with no I/O. Its `token` returns a JWT with `exp`, or throws `Source.RequestError` with the steps that make it work.
+
+```ts
+import { Identity, Source } from 'handshakes'
+
+// A platform that writes its OIDC token to an environment variable
+const platform = Source.from({
+  detect: (env) => env['EXAMPLE_PLATFORM'] === 'true',
+  name: 'examplePlatform',
+  async token(context) {
+    const value = context.env['EXAMPLE_OIDC_TOKEN']
+    // [!code hl:7]
+    // Throws, so the client tries no other source
+    if (!value)
+      throw new Source.RequestError({
+        message: 'EXAMPLE_OIDC_TOKEN is not set.',
+        source: 'examplePlatform',
+        steps: ['Turn on OIDC tokens for the job.'],
+      })
+    return value
+  },
+})
+
+const token = await Identity.token({ audience: 'https://auth.example.com', sources: [platform] })
+```
+
+## Types
+
+```ts
+// The shape of every source
+type Source = {
+  /** Returns whether the code runs on this platform. Reads environment variables only. */
+  detect: (env: Source.Env) => boolean
+  /** Name in `Token.source`, `status`, and errors, such as `githubActions`. */
+  name: string
+  /** Returns a JWT for `context.audience`. Throws `Source.RequestError`. */
+  token: (context: Source.Context) => Promise<string>
+}
+```
+
+- **`Source.Context`:** The inputs of `token`: `audience`, the `aud` that the token must carry, `env`, and `fetch`, which sends the requests of the source.
+- **`Source.Env`:** Environment variables, such as `process.env`, as `Readonly<Record<string, string | undefined>>`.
+- **`Source.gcp.Options`:** The options of `Source.gcp`.
+- **`Source.gitlab.Options`:** The options of `Source.gitlab`.
+- **`Source.Source`:** A source.
+- **`Source.vercel.Options`:** The options of `Source.vercel`.
+
+## Errors
+
+- **`Source.RequestError`:** A detected source cannot return a token. The cause is a missing variable or permission, a failed request, an error status, or a response without the token. It holds `source`, the name of the source. Its message never contains a token value.
+
+`steps` states the fix, such as `permissions: id-token: write` on GitHub Actions. A response with HTTP 401 or 403 names the permission of the job to request OIDC tokens.
+
+```ts
+import { Identity, Source } from 'handshakes'
+
+await Identity.token({ audience: 'https://auth.example.com' }).catch((error: unknown) => {
+  // [!code hl:2]
+  // The steps name the fix, such as a missing permission of the job
+  if (error instanceof Source.RequestError) console.error(error.source, error.steps)
+  else throw error
+})
+```
+
+[`Identity.token`](/api/core/identity/token) throws `Identity.NotFoundError` when no source detects its platform, and `Identity.AudienceError` for a token with another `aud`.

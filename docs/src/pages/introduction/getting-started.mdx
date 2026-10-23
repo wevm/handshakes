@@ -1,0 +1,166 @@
+import { Card, Cards } from 'vocs'
+
+# Getting Started [Replace a stored API key with an access token that expires in minutes]
+
+## Overview
+
+An API key is a long-lived secret. It sits in CI settings, `.env` files, and shell history, and it grants access until someone revokes it. Handshakes replaces it with an OAuth access token, which is a credential that expires in minutes.
+
+The client obtains the access token without a stored secret:
+
+- **CI and servers:** The platform, such as GitHub Actions or Vercel, signs an OIDC token for the running code. The client exchanges this subject token for an access token ([RFC 8693](https://www.rfc-editor.org/rfc/rfc8693)).
+- **Devices:** On a device (such as a laptop), the client runs the device authorization grant once ([RFC 8628](https://www.rfc-editor.org/rfc/rfc8628)). The user approves a code in a browser, and the client stores and refreshes the grant.
+
+The same client code runs in both places. [Concepts](/introduction/concepts) defines each term and the order in which the client resolves a token.
+
+## Agent Prompt
+
+Paste this prompt into a coding agent:
+
+```txt
+Read github.com/wevm/handshakes and replace the stored API keys of my project with Handshakes.
+```
+
+## Install
+
+Install the package with a package manager. The core entry has no dependencies.
+
+:::code-group
+
+```sh [pnpm]
+# Adds handshakes to the project
+pnpm add handshakes
+```
+
+```sh [npm]
+# Adds handshakes to the project
+npm install handshakes
+```
+
+```sh [bun]
+# Adds handshakes to the project
+bun add handshakes
+```
+
+:::
+
+## Setup
+
+Handshakes covers the three roles of OAuth: the client, the authorization server, and the API. A project can use one role, or all three. The examples use `auth.example.com` as the authorization server, and `api.example.com` as the API.
+
+:::steps
+
+### Create a Client
+
+`Client.create` returns an access token for one API. In CI, it exchanges the OIDC token of the platform. On a device, it runs the device grant and refreshes the stored grant.
+
+```ts [client.ts]
+import { Client } from 'handshakes'
+import { Store } from 'handshakes/node'
+
+const client = Client.create({
+  // OAuth client for the device grant. Required on a device only.
+  clientId: 'example-cli',
+  issuer: 'https://auth.example.com',
+  scope: 'data:read',
+  // Keeps the grant in `~/.config/handshakes/grants`, shared by every process.
+  store: Store.file(),
+})
+
+// Sends the request with `Authorization: Bearer`.
+const response = await client.fetch('https://api.example.com/v1/items')
+```
+
+### Serve the Exchange
+
+`Server.create` serves the token exchange as a fetch handler. It verifies the subject token, matches a trust policy, and calls `issue` for the credential. A [Better Auth](/guides/better-auth) server uses the `tokenExchange` plugin instead.
+
+```ts [server.ts]
+import { Policy, Server } from 'handshakes/server'
+
+const server = Server.create({
+  // Mints the credential, such as an API key. It expires no later than the subject token.
+  issue: async (context) => ({
+    accessToken: await keys.mint({ expiresAt: context.expiresAt, scopes: context.scopes }),
+    expiresAt: context.expiresAt,
+  }),
+  issuer: 'https://auth.example.com',
+  // Accepts the GitHub Actions tokens of one repository.
+  policies: [
+    Policy.githubActions({
+      audience: 'https://auth.example.com',
+      repositoryId: '812345',
+      scopes: ['data:read'],
+    }),
+  ],
+})
+
+// Serves `POST /oauth2/token` and `/.well-known/oauth-authorization-server`.
+export default { fetch: server.fetch }
+```
+
+### Verify the Token
+
+`Resource.create` verifies the access tokens that the API receives, and returns the `401` challenge. If `Server` issues an API key, the API checks that key as before and needs no `Resource`.
+
+```ts [api.ts]
+import { Resource } from 'handshakes/server'
+
+const resource = Resource.create({
+  authorizationServers: ['https://auth.example.com'],
+  resource: 'https://api.example.com',
+})
+
+export default {
+  async fetch(request: Request) {
+    // Returns `401` with `WWW-Authenticate` for a missing or invalid token.
+    const result = await resource.verify(request)
+    if (result.status === 'invalid') return resource.challenge(result)
+
+    return Response.json({ subject: result.principal.subject })
+  },
+}
+```
+
+:::
+
+## Command Line
+
+The `handshakes` CLI resolves a token in the same order as `Client`. A profile in `handshakes.json` names the authorization server and the client.
+
+```sh
+# Runs the device grant and stores the grant.
+handshakes authorize example
+
+# Runs the tests with an access token in the variable that the profile names.
+handshakes exec example -- pnpm test
+```
+
+## Next Steps
+
+<Cards>
+  <Card
+    title="Token Exchange"
+    description="Exchange the OIDC token of a CI job or a server for an access token."
+    icon="repeat"
+    to="/guides/token-exchange"
+  />
+  <Card
+    title="Device Authorization"
+    description="Run the device grant on a device, then store and refresh the grant."
+    icon="laptop"
+    to="/guides/device-authorization"
+  />
+  <Card
+    title="Authorization Server"
+    description="Serve the token exchange, and issue the credential of the host."
+    icon="server"
+    to="/guides/authorization-server"
+  />
+  <Card
+    title="Token Verification"
+    description="Verify access tokens and platform tokens in an API."
+    icon="shield-check"
+    to="/guides/token-verification"
+  />
+</Cards>

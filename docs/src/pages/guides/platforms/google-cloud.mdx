@@ -1,0 +1,117 @@
+# Google Cloud [Exchanges the identity token of a service account]
+
+## Overview
+
+The metadata server of Google Cloud signs an identity token for the service account of the running code. This token is the subject token: the JWT that the platform signs for the running code. `Source.gcp` requests it for any audience.
+
+The client exchanges the subject token at the authorization server (RFC 8693 token exchange). A trust policy on the server matches its claims, such as `sub`, the unique ID of the service account. The server then returns an access token that expires in minutes.
+
+| Platform                   | Detection                                         |
+| -------------------------- | ------------------------------------------------- |
+| Cloud Run, Cloud Functions | `Source.gcp`, through `K_SERVICE`                 |
+| Compute Engine, GKE        | A source that always detects, listed in `sources` |
+
+## Walkthrough
+
+:::steps
+
+### Create the Client
+
+On Cloud Run and Cloud Functions, `Source.defaults` include `Source.gcp`, which detects the service through `K_SERVICE`. The source sends `GET` to the identity endpoint of the metadata server with `Metadata-Flavor: Google`, the requested `audience`, and `format=full`.
+
+```ts [server.ts]
+import { Client } from 'handshakes'
+
+const client = Client.create({
+  // Also the `aud` of the identity token, since `subjectAudience` is not set.
+  issuer: 'https://auth.example.com',
+  scope: 'data:read',
+})
+
+const response = await client.fetch('https://api.example.com/v1/items')
+```
+
+### Add a Policy
+
+Google signs identity tokens with the issuer `https://accounts.google.com`. Match `sub`, the unique ID of the service account. A deleted service account and a new one with the same email have different IDs.
+
+```ts [server.ts]
+import { Policy, Server } from 'handshakes/server'
+
+const server = Server.create({
+  // `keys` stands for the API key store of the host.
+  issue: async (context) => ({
+    accessToken: await keys.mint({ expiresAt: context.expiresAt, scopes: context.scopes }),
+    expiresAt: context.expiresAt,
+  }),
+  issuer: 'https://auth.example.com',
+  policies: [
+    Policy.from({
+      audience: 'https://auth.example.com',
+      // The unique ID of the service account, not its email.
+      claims: { sub: '104857600000000000000' },
+      id: 'gcp:104857600000000000000',
+      issuer: 'https://accounts.google.com',
+      scopes: ['data:read'],
+    }),
+  ],
+})
+
+export default { fetch: server.fetch }
+```
+
+The Google Cloud CLI prints the unique ID of a service account.
+
+```sh
+# Prints the unique ID, such as 104857600000000000000
+gcloud iam service-accounts describe ci@acme.iam.gserviceaccount.com --format='value(uniqueId)'
+```
+
+:::
+
+## Recipes
+
+### Explicit Detection
+
+Compute Engine and GKE set no variable that `Source.gcp` reads. So `Source.gcp().detect` returns `false` there, also when `sources` lists the source. Wrap the source with `Source.from` and a `detect` that returns `true`.
+
+```ts [server.ts]
+import { Client, Source } from 'handshakes'
+
+const client = Client.create({
+  issuer: 'https://auth.example.com',
+  // No variable marks Compute Engine or GKE, so this source applies everywhere it runs.
+  sources: [Source.from({ ...Source.gcp(), detect: () => true })],
+})
+```
+
+The default detection covers Cloud Run and Cloud Functions only. List this source only in code that runs on Google Cloud, since it sends a request to the metadata server.
+
+### Metadata Host
+
+The source requests the token from `metadata.google.internal`. If `GCE_METADATA_HOST` is set, it uses that host. The `metadataHost` option replaces both.
+
+```ts [server.ts]
+import { Source } from 'handshakes'
+
+// Requests identity tokens from a metadata emulator.
+const source = Source.gcp({ metadataHost: '127.0.0.1:8080' })
+```
+
+### Common Failures
+
+`Source.RequestError` states the steps that resolve it.
+
+| Error                                     | Step                                                                                                  |
+| ----------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| The request to the metadata server failed | Check the network access of the job to this host, then run it again.                                  |
+| The request returned HTTP 401 or 403      | Check that the job may request OIDC tokens, such as `permissions: id-token: write` on GitHub Actions. |
+| The request returned another HTTP error   | Run the job again. If the error persists, check the status page of the platform.                      |
+
+## More
+
+- [Google Cloud STS](/guides/services/google-sts)
+- [Token Exchange](/guides/token-exchange)
+- [Source](/api/core/source)
+- [Policy](/api/server/policy)
+- [Google identity token documentation](https://cloud.google.com/compute/docs/instances/verifying-instance-identity)

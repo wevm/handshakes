@@ -1,0 +1,75 @@
+# Source.file [Returns a source that reads a subject token from a file]
+
+`Source.file` reads a projected token, such as a Kubernetes service account token. The platform fixes the audience where it projects the file, so the token must already carry the requested audience.
+
+```ts [client.ts]
+import { Client } from 'handshakes'
+import { Source } from 'handshakes/node'
+
+const client = Client.create({
+  issuer: 'https://auth.example.com',
+  // Reads the token that the pod spec projects for this audience
+  sources: [Source.file({ path: '/var/run/secrets/tokens/handshakes' })],
+})
+```
+
+## Signature
+
+```ts
+// A source for one token file
+Source.file(options)
+```
+
+## Parameters
+
+### options.path
+
+- **Type:** `string`
+
+The path of the token file. `detect` returns `true` when the file exists. `token` reads the file again for each request, so a token that the platform rotates stays current.
+
+```ts
+// Reads a Kubernetes projected service account token
+Source.file({ path: '/var/run/secrets/tokens/handshakes' })
+```
+
+### options.name
+
+- **Type:** `string`
+- **Default:** `'file'`
+
+The name of the source in `Token.source`, `status`, and errors.
+
+```ts
+// Names the source in `handshakes status` and in errors
+Source.file({ name: 'kubernetes', path: '/var/run/secrets/tokens/handshakes' })
+```
+
+## Returns
+
+- **Type:** `Source.Source`
+
+A source whose `detect` checks that the file exists, and whose `token` returns the content of the file without leading or trailing whitespace. [`Source`](/api/core/source) describes the contract.
+
+## Behavior
+
+- **Detection:** `detect` reads the file system, not environment variables. `Source.file` is not in `Source.defaults`, so list it in `sources` explicitly.
+- **Audience:** `Identity.token` and `Client` decode the token and compare its `aud` with the requested audience. A token with another `aud` throws `Identity.AudienceError`, and the client never sends it.
+- **Format:** A file that holds no JWT with `exp` throws `Source.RequestError`.
+
+```yaml [pod.yaml]
+# Projects a service account token for the authorization server
+volumes:
+  - name: tokens
+    projected:
+      sources:
+        - serviceAccountToken:
+            audience: https://auth.example.com
+            expirationSeconds: 3600
+            path: handshakes
+```
+
+## Errors
+
+- **`Identity.AudienceError`:** The token in the file carries another `aud` than the requested audience.
+- **`Source.RequestError`:** The file holds a value that is not a JWT with `exp`.

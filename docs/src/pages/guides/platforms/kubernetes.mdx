@@ -1,0 +1,124 @@
+# Kubernetes [Exchanges a projected service account token]
+
+## Overview
+
+Kubernetes signs a service account token for a pod and projects it into a file. This token is the subject token: the JWT that the platform signs for the running code. The pod spec fixes its audience, and the kubelet replaces the file before the token expires.
+
+`Source.file` of `handshakes/node` reads the file for each request. The client then exchanges the subject token at the authorization server (RFC 8693 token exchange). A trust policy on the server matches the claims of the token.
+
+| Audience              | Source                                |
+| --------------------- | ------------------------------------- |
+| Fixed in the pod spec | `Source.file`, which detects the file |
+
+## Walkthrough
+
+:::steps
+
+### Project the Token
+
+Add a projected volume with a `serviceAccountToken` source. Set its `audience` to the issuer of the authorization server.
+
+```yaml [deployment.yaml]
+spec:
+  serviceAccountName: deployer
+  containers:
+    - name: app
+      image: acme/app
+      volumeMounts:
+        - mountPath: /var/run/secrets/handshakes
+          name: handshakes-token
+          readOnly: true
+  volumes:
+    # The kubelet writes a token with this `aud` to /var/run/secrets/handshakes/token.
+    - name: handshakes-token
+      projected:
+        sources:
+          - serviceAccountToken:
+              audience: https://auth.example.com
+              expirationSeconds: 3600
+              path: token
+```
+
+### Create the Client
+
+List `Source.file` before the defaults. It detects the platform when the file exists, and the first detected source wins. The token must carry the requested audience, `subjectAudience` else `issuer`.
+
+```ts [server.ts]
+import { Client, Source } from 'handshakes'
+import { Source as NodeSource } from 'handshakes/node'
+
+const client = Client.create({
+  // Equals the `audience` of the projected token.
+  issuer: 'https://auth.example.com',
+  scope: 'data:read',
+  sources: [
+    NodeSource.file({ name: 'kubernetes', path: '/var/run/secrets/handshakes/token' }),
+    ...Source.defaults,
+  ],
+})
+
+const response = await client.fetch('https://api.example.com/v1/items')
+```
+
+### Add a Policy
+
+Kubernetes has no preset, so write the policy with `Policy.from`. The issuer is the service account issuer of the cluster. The server fetches keys from the discovery document of that issuer, so the cluster must serve it at an address that the server reaches.
+
+```ts [server.ts]
+import { Policy, Server } from 'handshakes/server'
+
+const server = Server.create({
+  // `keys` stands for the API key store of the host.
+  issue: async (context) => ({
+    accessToken: await keys.mint({ expiresAt: context.expiresAt, scopes: context.scopes }),
+    expiresAt: context.expiresAt,
+  }),
+  issuer: 'https://auth.example.com',
+  policies: [
+    Policy.from({
+      audience: 'https://auth.example.com',
+      // The namespace and name of the service account.
+      claims: { sub: 'system:serviceaccount:production:deployer' },
+      id: 'kubernetes:production:deployer',
+      issuer: 'https://oidc.cluster.example.com',
+      scopes: ['data:read'],
+    }),
+  ],
+})
+
+export default { fetch: server.fetch }
+```
+
+:::
+
+:::warning
+A policy matches top-level claims with string or number values only. Kubernetes nests the UID of the service account in the `kubernetes.io` claim, so no policy can match it. `sub` holds names, so a re-created service account with the same namespace and name matches the same policy.
+:::
+
+## Recipes
+
+### Find the Issuer
+
+The API server of the cluster serves its discovery document. Its `issuer` is the value for the policy.
+
+```sh
+# Prints the discovery document, with `issuer` and `jwks_uri`.
+kubectl get --raw /.well-known/openid-configuration
+```
+
+### Common Failures
+
+`Identity.AudienceError` and `Source.RequestError` state the steps that resolve them. If the file does not exist, `Source.file` does not detect, and the client tries the next source.
+
+| Error                                                    | Step                                                                                                                                             |
+| -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `Identity.AudienceError`                                 | Configure the platform to issue the token for the requested audience. Or request the audience that the token carries, through `subjectAudience`. |
+| The source returned a value that is not a JWT with `exp` | Check that the source returns an OIDC token, such as the file that `Source.file` reads.                                                          |
+| `Exchange.RejectedError` with `invalid_grant`            | Check that a trust policy on the server matches the issuer, audience, and claims of the subject token.                                           |
+
+## More
+
+- [Token Exchange](/guides/token-exchange)
+- [Source.file](/api/node/source/file)
+- [Policy](/api/server/policy)
+- [Kubernetes service account token documentation](https://kubernetes.io/docs/tasks/configure-pod-container/configure-service-account/#serviceaccount-token-volume-projection)

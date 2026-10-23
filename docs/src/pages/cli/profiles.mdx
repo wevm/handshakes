@@ -1,0 +1,45 @@
+# profiles [Lists the profiles, the file of each, and the default profile]
+
+`handshakes profiles` lists every profile that the CLI reads, and the file that defines each. It sends no request and reads no grant.
+
+```sh
+# Lists the profiles as JSON
+handshakes profiles --json
+```
+
+```json
+{
+  "default": "example",
+  "profiles": [
+    {
+      "file": "/home/ci/app/handshakes.json",
+      "issuer": "https://auth.example.com",
+      "name": "example"
+    }
+  ]
+}
+```
+
+## Signature
+
+```sh
+# Takes no argument and no option of its own
+handshakes profiles
+```
+
+The CLI reads the files in the order of the [configuration](/cli/configuration). A project profile replaces a user profile of the same name, so the list holds each name once.
+
+## Output
+
+- **`default`:** The name of the default profile, or `null`. The project file replaces the `default` of the user file.
+- **`profiles`:** One entry for each profile, with these fields:
+  - **`file`:** The path of the file that defines the profile.
+  - **`issuer`:** The `issuer` of the profile, else its token endpoint.
+  - **`name`:** The name of the profile.
+
+## Errors
+
+| Error code   | Exit code | Condition                                 |
+| ------------ | --------- | ----------------------------------------- |
+| `NO_PROFILE` | 2         | A file does not match the profile schema. |
+| `FAILED`     | 1         | A file is not valid JSON.                 |

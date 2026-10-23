@@ -1,0 +1,33 @@
+# Why Handshakes [Short-lived credentials from standard OAuth endpoints]
+
+## Overview
+
+A stored API key is valid until someone revokes it. Every copy of it, in CI settings, `.env` files, logs, or a leaked image, grants the same access for the same time. Rotation is a manual task, so keys often live for years.
+
+The platforms that run code already sign an identity for it. GitHub Actions, Vercel, GitLab CI, CircleCI, Google Cloud, and Buildkite issue an OIDC token for each job or request. Handshakes exchanges that token for an access token, so the code stores no secret at all.
+
+## Comparison
+
+| Property | Stored API key                           | Handshakes                                                           |
+| -------- | ---------------------------------------- | -------------------------------------------------------------------- |
+| Lifetime | Until revocation                         | Minutes, and never longer than the subject token                     |
+| Storage  | A secret in CI settings or a `.env` file | No secret in CI. A grant file with mode 0600 on a device             |
+| Rotation | Manual                                   | Each job or request receives a new token                             |
+| Identity | The holder of the key                    | Claims that cannot change, such as `repository_id`                   |
+| Scope    | Fixed when the key is created            | The scopes of the trust policy, or a subset that the client requests |
+| Audience | Any service that accepts the key         | One audience for each subject token                                  |
+
+## Principles
+
+- **Short-lived:** Code stores no long-lived credential. An access token expires in minutes, and an exchanged token never outlives the subject token that it replaces.
+- **Standard:** The client calls only standard OAuth endpoints, so it works with any authorization server that implements them, such as Better Auth or Google.
+- **Universal:** One resolution order applies in CI, serverless functions, containers, and devices.
+- **Portable:** The core and server entries have no dependencies and no Node built-ins. They run in Node, Bun, Deno, and edge runtimes.
+- **Explicit:** Every subject token has an explicit audience. A detected source that fails throws, and never falls through to a different identity.
+- **Tested:** Every test runs against a real authorization server or a real platform, with no mocks.
+
+## Non-Goals
+
+- **Authorization server:** `Server` serves the token exchange only. It stores no tokens, and runs no device grant, consent, or client registration. A full server, such as Better Auth, adds the exchange through a plugin.
+- **Secret vault:** Handshakes stores grants for the device grant, and no other secrets.
+- **Browser sign-in:** A web application signs users in through its own OAuth flow.

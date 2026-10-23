@@ -1,0 +1,95 @@
+# revoke [Revokes the refresh token and deletes the stored grant]
+
+`handshakes revoke` deletes the stored grant of a profile, then revokes its refresh token at the revocation endpoint of the server (RFC 7009). `logout` is an alias.
+
+```sh
+# Signs the device out of the example profile
+handshakes revoke example
+```
+
+## Signature
+
+```sh
+# Revokes the grant of a profile
+handshakes revoke [profile] [options]
+handshakes logout [profile] [options]
+```
+
+The CLI deletes the grant first, so a failed revocation never leaves the grant in the store. Without a refresh token or a revocation endpoint, the command only deletes the grant. An error response below HTTP 500 counts as revoked, since some servers return `400` for a token that they no longer know.
+
+## Arguments
+
+### profile
+
+- **Type:** `string`
+- **Default:** `HANDSHAKES_PROFILE`, else the `default` profile
+
+The name of a profile of the [configuration](/cli/configuration).
+
+```sh
+# Revokes the grant of the default profile
+handshakes revoke
+```
+
+## Options
+
+The options select the grant. A grant serves one issuer, client, resource, and token endpoint, so the options must match the options of [`authorize`](/cli/authorize).
+
+### --client-id
+
+- **Type:** `string`
+- **Default:** `clientId` of the profile
+
+The OAuth client of the grant.
+
+```sh
+# Revokes the grant of this client
+handshakes revoke example --client-id example-cli
+```
+
+### --issuer
+
+- **Type:** `string`
+- **Default:** `issuer` of the profile
+
+The authorization server of the grant.
+
+```sh
+# Revokes a grant without a configuration file
+handshakes revoke --issuer https://auth.example.com --client-id example-cli
+```
+
+### --resource
+
+- **Type:** `string`
+- **Default:** `resource` of the profile
+
+The RFC 8707 resource of the grant.
+
+```sh
+# Revokes the grant for one API
+handshakes revoke example --resource https://api.example.com
+```
+
+### --scope
+
+- **Type:** `string`
+- **Default:** `scope` of the profile
+
+Accepted for a uniform interface. Scopes do not select the grant.
+
+```sh
+# Revokes the same grant as without --scope
+handshakes revoke example --scope data:read
+```
+
+## Output
+
+- **`revoked`:** Always `true`. The command also succeeds when no grant is stored.
+
+## Errors
+
+| Error code   | Exit code | Condition                                                                               |
+| ------------ | --------- | --------------------------------------------------------------------------------------- |
+| `NO_PROFILE` | 2         | No profile applies and `--issuer` is not set, or the profile argument names no profile. |
+| `FAILED`     | 1         | The revocation endpoint returns HTTP 500 or more, or the issuer serves no metadata.     |

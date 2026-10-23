@@ -1,0 +1,119 @@
+# Metadata.protectedResource [Returns the metadata of a protected resource]
+
+`protectedResource` reads the metadata of an API ([RFC 9728](https://www.rfc-editor.org/rfc/rfc9728)), which names the authorization servers that issue tokens for it. [`Client.discover`](/api/core/client/discover) uses it to create a client from the URL of an API alone.
+
+```ts [example.ts]
+import { Metadata } from 'handshakes'
+
+// Reads the metadata at the well-known path of the API
+const metadata = await Metadata.protectedResource({ resource: 'https://api.example.com' })
+
+// [!code hl:2]
+// The first authorization server that issues tokens for the API
+const issuer = metadata.authorizationServers[0]
+```
+
+## Signature
+
+```ts
+// The metadata of one API, from its resource identifier or from a metadata URL
+const metadata = await Metadata.protectedResource(options)
+```
+
+The request is a `GET` with `Accept: application/json`, to `url`, else to the well-known URL of `resource`. RFC 9728 §3.1 inserts the well-known suffix before the path of the resource.
+
+| `resource`                   | Well-known URL                                                    |
+| ---------------------------- | ----------------------------------------------------------------- |
+| `https://api.example.com`    | `https://api.example.com/.well-known/oauth-protected-resource`    |
+| `https://api.example.com/v1` | `https://api.example.com/.well-known/oauth-protected-resource/v1` |
+
+When `options.resource` is set, the `resource` of the metadata must equal it (RFC 9728 §3.3). With `url` alone, `protectedResource` checks no resource, so the caller must check the returned `resource`.
+
+## Parameters
+
+### options.fetch
+
+- **Type:** `typeof globalThis.fetch`
+- **Default:** `globalThis.fetch`
+
+Sends the request.
+
+```ts
+// Sends the request through a fetch with a proxy or a test server
+Metadata.protectedResource({ fetch: proxyFetch, resource: 'https://api.example.com' })
+```
+
+### options.resource
+
+- **Type:** `string`
+- **Default:** `undefined`
+
+The expected resource identifier of the API. Without `url`, it also sets the URL of the metadata. It is required when `url` is absent.
+
+```ts
+// Reads https://api.example.com/.well-known/oauth-protected-resource
+Metadata.protectedResource({ resource: 'https://api.example.com' })
+```
+
+### options.url
+
+- **Type:** `string`
+- **Default:** the well-known URL of `resource`
+
+The URL of the metadata, such as `resource_metadata` of a [challenge](/api/core/metadata/challenge). It is required when `resource` is absent.
+
+```ts
+// Reads the metadata that the challenge of the API names
+const metadata = await Metadata.protectedResource({ url: challenge.resourceMetadata })
+
+// [!code hl:2]
+// Without `resource`, the caller checks that the metadata is for the API that it calls
+if (metadata.resource !== 'https://api.example.com') throw new Error('Unexpected resource.')
+```
+
+## Returns
+
+- **Type:** `Promise<Metadata.ProtectedResource>`
+
+The fields that Handshakes uses, from the metadata of RFC 9728 §2.
+
+### authorizationServers
+
+- **Type:** `readonly string[]`
+
+The issuers of the authorization servers that issue tokens for the resource, from `authorization_servers`. It is empty when the metadata lists none.
+
+### resource
+
+- **Type:** `string`
+
+The resource identifier, from `resource`.
+
+### scopesSupported
+
+- **Type:** `readonly string[]`
+
+The scopes that the resource uses, from `scopes_supported`. It is empty when the metadata lists none.
+
+## Errors
+
+- **`Metadata.ResourceNotFoundError`:** The response has an error status, it has no `resource`, or its `resource` differs from `options.resource`. A failed request or a body that is not JSON throws it too, with the original error as `cause`. It holds `resource`: `options.resource`, else the URL of the metadata.
+
+```ts
+import { Metadata } from 'handshakes'
+
+await Metadata.protectedResource({ resource: 'https://api.example.com' }).catch(
+  (error: unknown) => {
+    // [!code hl:2]
+    // The API serves no RFC 9728 metadata, so its issuer must come from elsewhere
+    if (error instanceof Metadata.ResourceNotFoundError) console.error(error.message)
+    else throw error
+  },
+)
+```
+
+## Types
+
+- **`Metadata.ProtectedResource`:** The returned metadata.
+- **`Metadata.protectedResource.ErrorType`:** The errors of `protectedResource`.
+- **`Metadata.protectedResource.Options`:** The options of `protectedResource`: `resource` with an optional `url`, or `url` alone.

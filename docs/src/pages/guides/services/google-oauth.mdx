@@ -1,0 +1,79 @@
+# Google OAuth [Runs the device grant against Google]
+
+## Overview
+
+:::note
+This integration has no automated test in this repository yet.
+:::
+
+On a device (such as a laptop), the client runs the device authorization grant (RFC 8628) against Google. In this grant, the user approves a code in a browser, and the client receives an access token and a refresh token. The client stores this grant, and refreshes it before the access token expires.
+
+Google serves OpenID Connect discovery for the issuer `https://accounts.google.com`. The client reads the device authorization, token, and revocation endpoints from it. Google requires a client secret on the device grant, and allows few scopes for it.
+
+| Setting        | Value                         |
+| -------------- | ----------------------------- |
+| Issuer         | `https://accounts.google.com` |
+| Client type    | TVs and Limited Input devices |
+| Client secret  | Required                      |
+| Refresh tokens | Do not rotate                 |
+
+## Walkthrough
+
+:::steps
+
+### Register the Client
+
+Create an OAuth client of type "TVs and Limited Input devices" in the Google Cloud console. Keep the client secret in an environment variable, never in code or in argv.
+
+### Create the Client
+
+`Store.file` of `handshakes/node` keeps the grant in `~/.config/handshakes/grants`, shared by every process of the user. `clientSecret` goes with the device grant, the refresh, and the revocation.
+
+```ts [userinfo.ts]
+import { Client } from 'handshakes'
+import { Store } from 'handshakes/node'
+
+const client = Client.create({
+  clientId: '<client id>.apps.googleusercontent.com',
+  // Read from the environment, never from argv.
+  clientSecret: process.env.GOOGLE_CLIENT_SECRET,
+  issuer: 'https://accounts.google.com',
+  scope: 'openid email',
+  store: Store.file(),
+})
+
+// Runs the device grant on the first call in a terminal, then uses the stored grant.
+const response = await client.fetch('https://openidconnect.googleapis.com/v1/userinfo')
+```
+
+### Approve the Code
+
+The client prints the verification page and the user code to stderr. The user opens the page, signs in, and approves the code. The client polls the token endpoint at the interval of the server, then stores the grant.
+
+:::
+
+## Recipes
+
+### Refresh and Revoke
+
+Google refresh tokens do not rotate. A refresh response holds no new refresh token, so the client keeps the stored one. `client.revoke()` revokes the refresh token at the revocation endpoint, and deletes the stored grant.
+
+```ts [logout.ts]
+// Revokes the refresh token, and deletes the grant from the store.
+await client.revoke()
+```
+
+### Scopes
+
+The device grant of Google allows only a short list of scopes, such as `openid` and `email`. Google rejects a request for another scope, and `DeviceGrant.RejectedError` reports the error of the server. The Google documentation lists the allowed scopes.
+
+### The CLI
+
+The CLI reads no client secret. So `handshakes authorize` cannot run the device grant against Google. Run the grant through `Client.create` in code.
+
+## More
+
+- [Device Authorization](/guides/device-authorization)
+- [Client.create](/api/core/client/create)
+- [Store.file](/api/node/store/file)
+- [Google device grant documentation](https://developers.google.com/identity/protocols/oauth2/limited-input-device)

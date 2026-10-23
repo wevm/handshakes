@@ -1,0 +1,67 @@
+# Identity.detect [Returns the first source that detects its platform]
+
+`Identity.detect` reads environment variables only. It sends no request and requests no token. It returns the source that [`Identity.token`](/api/core/identity/token) and [`Client.create`](/api/core/client/create) would use, or `undefined`.
+
+```ts [example.ts]
+import { Identity } from 'handshakes'
+
+// Logs `githubActions` in a GitHub Actions job
+console.log(Identity.detect()?.name ?? 'no platform')
+```
+
+## Signature
+
+```ts
+// The detected source, or undefined
+Identity.detect(options)
+```
+
+## Parameters
+
+### options.env
+
+- **Type:** `Source.Env`
+- **Default:** `process.env` where the runtime has one, else an empty environment
+
+The environment that each `detect` function reads.
+
+```ts
+// Detects Vercel from an explicit environment
+Identity.detect({ env: { VERCEL: '1' } })
+```
+
+### options.sources
+
+- **Type:** `readonly Source.Source[]`
+- **Default:** [`Source.defaults`](/api/core/source)
+
+The sources in priority order. The first source whose `detect` returns `true` wins.
+
+```ts
+import { Identity } from 'handshakes'
+import { Source } from 'handshakes/node'
+
+// Also detects Buildkite
+Identity.detect({ sources: Source.defaults })
+```
+
+## Returns
+
+- **Type:** `Source.Source | undefined`
+
+The first source that detects its platform, or `undefined` when none does.
+
+```ts
+// Selects the exchange on a platform, and the device grant elsewhere
+const method = Identity.detect() ? 'exchange' : 'grant'
+```
+
+Some platforms set no variable to detect, such as Compute Engine and GKE. `Source.gcp()` detects `K_SERVICE` only, so it detects Cloud Run and Cloud Functions but not these platforms. On them, pass a source whose `detect` returns `true`.
+
+```ts
+import { Identity, Source } from 'handshakes'
+
+// Uses the metadata server of Compute Engine, which sets no variable to detect
+const gce = Source.from({ ...Source.gcp(), detect: () => true })
+Identity.detect({ sources: [gce] })
+```

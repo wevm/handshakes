@@ -1,0 +1,92 @@
+# Errors [Every error that the client entries throw, with the steps that resolve it]
+
+Each error states what failed, then the steps that resolve it. Its `name` is namespaced after the module that throws it, such as `Client.AuthorizationRequiredError`. No error holds a token value.
+
+```ts [example.ts]
+import { Client } from 'handshakes'
+
+const client = Client.create({ issuer: 'https://auth.example.com', interactive: false })
+
+try {
+  await client.token()
+} catch (error) {
+  if (!(error instanceof Client.AuthorizationRequiredError)) throw error
+
+  // Prints what failed, then each step on its own line
+  console.error(error.details)
+  for (const step of error.steps) console.error(`- ${step}`)
+}
+```
+
+## Contract
+
+Every error class extends one base class, which holds two parts of the message:
+
+- **`details`:** What failed, without the steps.
+- **`steps`:** The imperative sentences that resolve the error, in order. Empty when no step applies.
+
+The `message` joins both parts. One step follows `To resolve:`, and several steps form a numbered list. The CLI prints the same message on one line.
+
+```txt
+Authorization is required for https://auth.example.com.
+
+To resolve:
+1. On a device, run `authorize` (`handshakes authorize` in the CLI) to run the device grant.
+2. In CI, check that the platform is detected with `handshakes status`.
+```
+
+The base class lives in an internal module, and no entry exports it. Narrow an error with `instanceof` on its namespaced class. An error that wraps another, such as a failed network request, sets `cause`.
+
+An invalid option throws a `TypeError` instead, and its message names the fix. For example, `Client.create` without `issuer` and `endpoints` throws one that asks for either option.
+
+## Error Classes
+
+| Error                               | Thrown when                                                                                                                      | Fields                                |
+| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------- |
+| `Client.AuthorizationRequiredError` | No source detects, no grant applies, and the client is not interactive                                                           | `issuer`                              |
+| `Client.DiscoveryError`             | An API names no authorization server, or its challenge names the metadata of another resource                                    | `url`                                 |
+| `Client.RejectedError`              | The token endpoint rejects a refresh with an error other than `invalid_grant`, or the revocation endpoint returns a `5xx` status | `error`, `errorDescription`, `status` |
+| `Client.ResourceError`              | `client.fetch` receives a URL outside the `resource` of the client                                                               | `resource`, `url`                     |
+| `DeviceGrant.DeniedError`           | The user denies the device code                                                                                                  | None                                  |
+| `DeviceGrant.ExpiredError`          | The device code expires before approval                                                                                          | None                                  |
+| `DeviceGrant.RejectedError`         | The device authorization or token endpoint returns an RFC 6749 §5.2 error other than a pending state                             | `error`, `errorDescription`, `status` |
+| `DeviceGrant.UnsupportedError`      | The server has no device authorization endpoint                                                                                  | None                                  |
+| `Exchange.RejectedError`            | The token endpoint rejects the token exchange with an RFC 6749 §5.2 error                                                        | `error`, `errorDescription`, `status` |
+| `Grant.InvalidResponseError`        | A token response has no `access_token` or `expires_in`                                                                           | None                                  |
+| `Identity.AudienceError`            | The token of a source carries another `aud` than the requested audience                                                          | `expected`, `received`, `source`      |
+| `Identity.NotFoundError`            | No source detects its platform                                                                                                   | `audience`, `checked`                 |
+| `Metadata.NotFoundError`            | The issuer serves no valid authorization server metadata                                                                         | `issuer`                              |
+| `Metadata.ResourceNotFoundError`    | The resource serves no valid protected resource metadata, or metadata of another resource                                        | `resource`                            |
+| `Source.RequestError`               | A detected source cannot return a token. `steps` states the fix, such as `permissions: id-token: write`                          | `source`                              |
+| `Store.LockTimeoutError`            | Another process holds the lock of [`Store.file`](/api/node/store/file) past `lockTimeout`                                        | `key`                                 |
+
+`Store.LockTimeoutError` is in `handshakes/node`. The other classes are in `handshakes`. [`handshakes/server`](/api/server) returns OAuth error responses to the client instead, and throws only a `TypeError` for invalid options.
+
+## OAuth Errors
+
+`Client.RejectedError`, `DeviceGrant.RejectedError`, and `Exchange.RejectedError` hold the `error` and `error_description` of the response ([RFC 6749 §5.2](https://www.rfc-editor.org/rfc/rfc6749#section-5.2)). Their steps follow from `error`:
+
+| `error`                                         | Steps                                                                                                                        |
+| ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `invalid_client`                                | Check that `clientId` names a registered client. Set `clientSecret` if the server requires one.                              |
+| `invalid_grant` on an exchange                  | Check that a trust policy matches the issuer, audience, and claims of the subject token, and that the token has not expired. |
+| `invalid_grant` on a refresh                    | Run `authorize` to start a new grant.                                                                                        |
+| `invalid_scope`                                 | Request only scopes that the client, or the trust policy, allows.                                                            |
+| `invalid_target`                                | Check `resource`, and that the server allows the client to request it ([RFC 8707](https://www.rfc-editor.org/rfc/rfc8707)).  |
+| `unauthorized_client`, `unsupported_grant_type` | Check that the server supports the grant, and registers the client for it.                                                   |
+| Other                                           | Read `errorDescription`, and the documentation of the server.                                                                |
+
+A response without `error` but with an error status carries `server_error`. A successful response that lacks a required field carries `invalid_response`, with HTTP status `200`.
+
+```ts
+import { Exchange } from 'handshakes'
+
+await Exchange.request({
+  endpoint: 'https://auth.example.com/oauth2/token',
+  subjectToken: '<subject token>',
+}).catch((error: unknown) => {
+  // `invalid_grant`: no trust policy matches the subject token
+  if (error instanceof Exchange.RejectedError) console.error(error.error, error.errorDescription)
+  else throw error
+})
+```

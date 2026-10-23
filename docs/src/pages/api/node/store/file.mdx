@@ -1,0 +1,92 @@
+# Store.file [Returns a store that keeps grants in files, with a lock across processes]
+
+`Store.file` writes each grant to its own file with mode 0600. Its lock is a file that `open` creates exclusively, so the lock covers every process that shares the directory. `Client` refreshes a grant under this lock.
+
+```ts [client.ts]
+import { Client } from 'handshakes'
+import { Store } from 'handshakes/node'
+
+const client = Client.create({
+  clientId: 'example-cli',
+  issuer: 'https://auth.example.com',
+  // Shares one grant between every process of the user
+  store: Store.file(),
+})
+```
+
+A server such as Better Auth rotates the refresh token on each refresh. If a client uses an old refresh token again, the server can revoke every grant of the client and user. So only one process refreshes a grant at a time.
+
+## Signature
+
+```ts
+// A store for one directory
+Store.file(options)
+```
+
+## Parameters
+
+### options.directory
+
+- **Type:** `string`
+- **Default:** `$XDG_CONFIG_HOME/handshakes/grants`, else `~/.config/handshakes/grants`
+
+The directory of the grant files. The store creates it with mode 0700 when it writes a grant or takes a lock. The default reads `XDG_CONFIG_HOME` from `process.env`.
+
+```ts
+// Keeps the grants of a test in its own directory
+Store.file({ directory: '/tmp/handshakes-test/grants' })
+```
+
+### options.lockTimeout
+
+- **Type:** `number`
+- **Default:** `10000`
+
+How long `lock` waits for another process to release the lock, in milliseconds. After this time, `lock` throws `Store.LockTimeoutError`.
+
+```ts
+// Waits up to 30 seconds for another process to finish a refresh
+Store.file({ lockTimeout: 30_000 })
+```
+
+## Returns
+
+- **Type:** `Store.Store`
+
+A store with `delete`, `get`, `lock`, and `set`. [`Store`](/api/core/store) describes the contract.
+
+## Files
+
+The store key holds URLs, so each file name is the first 32 hexadecimal characters of the SHA-256 hash of the key.
+
+```sh
+# A grant and the lock of a refresh in progress
+~/.config/handshakes/grants/3f2a9c0e5b7d41a8c6e2f0b9d4a17e53.json
+~/.config/handshakes/grants/3f2a9c0e5b7d41a8c6e2f0b9d4a17e53.json.lock
+```
+
+- **Grant file:** `set` writes the grant to a temporary file with mode 0600, then renames it over the grant file. A rename replaces the file atomically, so a reader never reads a partial grant.
+- **Missing grant:** `get` returns `undefined` when the file does not exist. Other read errors throw.
+- **Delete:** `delete` removes the file, and succeeds when the file does not exist.
+
+## Lock
+
+`lock` creates `<grant file>.lock` with mode 0600, and runs the function while it holds the file. The lock file holds a random nonce of its owner.
+
+- **Wait:** When the lock file exists, `lock` tries again every 25 milliseconds, until `lockTimeout` ends.
+- **Heartbeat:** The owner updates the modification time of the lock file every 10 seconds, so a slow refresh never looks stale.
+- **Stale lock:** A lock file that is older than 30 seconds is from a process that stopped. A waiter moves it to a unique name first, so only one waiter removes it. A lock that turns out fresh moves back.
+- **Release:** The owner removes the lock file only when it still holds the nonce of the owner. So an owner never removes a lock that replaced its own.
+
+```ts [refresh.ts]
+import { Store } from 'handshakes/node'
+
+const store = Store.file()
+
+// Runs the function while no other process holds the lock of this key
+const grant = await store.lock('example-key', () => store.get('example-key'))
+```
+
+## Errors
+
+- **`Store.LockTimeoutError`:** Another process holds the lock past `lockTimeout`. `key` holds the store key. The steps name the `.lock` file to delete when no other process runs.

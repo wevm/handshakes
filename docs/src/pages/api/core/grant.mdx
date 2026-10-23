@@ -1,0 +1,254 @@
+# Grant [The access token and refresh token that a token endpoint issues]
+
+A grant is the result of the device grant or a refresh: an access token, an optional refresh token, and their expiry. A [store](/api/core/store) keeps grants under the key of `Grant.key`, and [`Client.create`](/api/core/client/create) refreshes a grant when `Grant.expiring` returns `true`.
+
+```ts [example.ts]
+import { Grant, Store } from 'handshakes'
+
+const store = Store.memory()
+
+// The key of the grants of one issuer, client, and resource
+const key = Grant.key({
+  clientId: 'example-cli',
+  issuer: 'https://auth.example.com',
+  resource: 'https://api.example.com',
+})
+const grant = await store.get(key)
+
+// [!code hl:2]
+// Returns true when 60 seconds or 20% of the lifetime of the access token remain
+if (grant && Grant.expiring(grant, { now: Date.now() }))
+  console.error('The access token expires soon.')
+```
+
+A grant holds token values. Never log it, or write it where other users can read it.
+
+## Grant.expiring
+
+- **Type:** `(token: Pick<Grant.Grant, 'expiresAt' | 'issuedAt'>, options: Grant.expiring.Options) => boolean`
+
+Returns whether a token expires soon enough to replace. The margin is 60 seconds or 20% of the lifetime, whichever is more. The client applies the same rule to a cached access token and to a stored grant.
+
+| Lifetime   | Margin      |
+| ---------- | ----------- |
+| 4 minutes  | 60 seconds  |
+| 15 minutes | 180 seconds |
+| 1 hour     | 720 seconds |
+
+```ts
+// A token of 15 minutes is replaced 3 minutes before it expires
+Grant.expiring({ expiresAt: now + 179_000, issuedAt: now - 721_000 }, { now })
+```
+
+### options.now
+
+- **Type:** `number`
+
+The current time, in milliseconds since the epoch.
+
+```ts
+// Compares the expiry with the clock of the process
+Grant.expiring(grant, { now: Date.now() })
+```
+
+## Grant.from
+
+- **Type:** `(grant: Grant.Grant) => Grant.Grant`
+
+Returns `grant` unchanged, typed as a grant, such as a grant that a custom store reads back.
+
+```ts
+// Types the grant that a custom store parsed
+const grant = Grant.from(JSON.parse(value))
+```
+
+## Grant.fromResponse
+
+- **Type:** `(body: Readonly<Record<string, unknown>>, options: Grant.fromResponse.Options) => Grant.Grant`
+
+Returns the grant of a token response ([RFC 6749 §5.1](https://www.rfc-editor.org/rfc/rfc6749#section-5.1)). The response must hold `access_token` and `expires_in`. A response without a new `refresh_token` keeps `options.refreshToken`, since some servers, such as Google, do not rotate refresh tokens.
+
+```ts
+import { Grant } from 'handshakes'
+
+// The JSON body of a refresh response
+const grant = Grant.fromResponse(body, {
+  clientId: 'example-cli',
+  issuer: 'https://auth.example.com',
+  now: Date.now(),
+  refreshToken: previous.refreshToken,
+})
+```
+
+`expiresAt` is `now` plus `expires_in`, and `issuedAt` is `now`. The grant holds `scope` only when the response returns one.
+
+### options.clientId
+
+- **Type:** `string`
+
+The client that the grant belongs to.
+
+```ts
+// The client of the request
+Grant.fromResponse(body, { clientId: 'example-cli', issuer, now: Date.now() })
+```
+
+### options.issuer
+
+- **Type:** `string`
+
+The issuer, or the token endpoint for a server without metadata.
+
+```ts
+// The issuer of the request
+Grant.fromResponse(body, { clientId, issuer: 'https://auth.example.com', now: Date.now() })
+```
+
+### options.now
+
+- **Type:** `number`
+
+The time of the request, in milliseconds since the epoch. Read it before the request, so the expiry is never later than the server intends.
+
+```ts
+// Reads the clock before the request
+const now = Date.now()
+```
+
+### options.refreshToken
+
+- **Type:** `string`
+- **Default:** `undefined`
+
+The refresh token of the grant that a refresh replaces.
+
+```ts
+// Keeps the refresh token when the server issues no new one
+Grant.fromResponse(body, { clientId, issuer, now, refreshToken: previous.refreshToken })
+```
+
+### options.resource
+
+- **Type:** `string`
+- **Default:** `undefined`
+
+The RFC 8707 resource of the request. The grant records it.
+
+```ts
+// Records the API that the access token is for
+Grant.fromResponse(body, { clientId, issuer, now, resource: 'https://api.example.com' })
+```
+
+## Grant.key
+
+- **Type:** `(options: Grant.key.Options) => string`
+
+Returns the store key of a grant: the issuer, the client, the resource, and the token endpoint, joined with spaces. An absent value is an empty string. A grant serves exactly this combination, so a client with another resource or token endpoint never reads it.
+
+```ts
+// "https://auth.example.com example-cli https://api.example.com "
+Grant.key({
+  clientId: 'example-cli',
+  issuer: 'https://auth.example.com',
+  resource: 'https://api.example.com',
+})
+```
+
+[`Store.file`](/api/node/store/file) names each file with a hash of the key, since the key holds URLs.
+
+### options.clientId
+
+- **Type:** `string`
+- **Default:** `undefined`
+
+The client.
+
+```ts
+// The key of a grant without a client
+Grant.key({ issuer: 'https://auth.example.com' })
+```
+
+### options.issuer
+
+- **Type:** `string`
+
+The issuer, or the token endpoint for a server without metadata.
+
+```ts
+// The key of a server without metadata
+Grant.key({ clientId: 'example-cli', issuer: 'https://auth.example.com/token' })
+```
+
+### options.resource
+
+- **Type:** `string`
+- **Default:** `undefined`
+
+The RFC 8707 resource.
+
+```ts
+// A grant for one API
+Grant.key({ clientId: 'example-cli', issuer, resource: 'https://api.example.com' })
+```
+
+### options.tokenEndpoint
+
+- **Type:** `string`
+- **Default:** `undefined`
+
+The token endpoint, when the client sets `endpoints`. A project file with other endpoints then never reads the grant.
+
+```ts
+// A client with explicit endpoints
+Grant.key({ clientId: 'example-cli', issuer, tokenEndpoint: 'https://auth.example.com/token' })
+```
+
+## Types
+
+```ts
+// A stored grant
+type Grant = {
+  /** The access token. */
+  accessToken: string
+  /** The client that the grant belongs to. */
+  clientId: string
+  /** When the access token expires, in milliseconds since the epoch. */
+  expiresAt: number
+  /** When the access token was issued, in milliseconds since the epoch. */
+  issuedAt: number
+  /** The issuer, or the token endpoint for a server without metadata. */
+  issuer: string
+  /** The refresh token. Absent when the server issues none. */
+  refreshToken?: string | undefined
+  /** The RFC 8707 resource that the grant is for. */
+  resource?: string | undefined
+  /** Space-separated scopes of the access token. */
+  scope?: string | undefined
+}
+```
+
+- **`Grant.expiring.Options`:** The options of `expiring`.
+- **`Grant.fromResponse.Options`:** The options of `fromResponse`.
+- **`Grant.Grant`:** A grant.
+- **`Grant.key.Options`:** The options of `key`.
+
+## Errors
+
+- **`Grant.InvalidResponseError`:** A token response has no `access_token`, or no numeric `expires_in`. Its steps name the RFC 6749 §5.1 response, and for a GitHub App, the expiration of user tokens.
+
+```ts
+import { Grant } from 'handshakes'
+
+try {
+  Grant.fromResponse(body, {
+    clientId: 'example-cli',
+    issuer: 'https://auth.example.com',
+    now: Date.now(),
+  })
+} catch (error) {
+  // [!code hl:2]
+  // A GitHub App without expiring user tokens returns no expires_in
+  if (error instanceof Grant.InvalidResponseError) console.error(error.message)
+  else throw error
+}
+```

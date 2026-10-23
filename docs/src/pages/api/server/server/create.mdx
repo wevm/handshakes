@@ -1,0 +1,198 @@
+# Server.create [Returns the RFC 8693 token endpoint as a fetch handler]
+
+The server verifies the subject token of a request against trust policies. Then it calls `issue`, and the host mints the credential, such as an API key. The server stores no tokens. Creating it sends no request.
+
+```ts [server.ts]
+import { Policy, Server } from 'handshakes/server'
+
+const server = Server.create({
+  // Mints the credential. It expires no later than `context.expiresAt`.
+  issue: async (context) => ({
+    accessToken: await keys.mint({ expiresAt: context.expiresAt, scopes: context.scopes }),
+    expiresAt: context.expiresAt,
+  }),
+  issuer: 'https://auth.example.com',
+  policies: [
+    Policy.githubActions({
+      audience: 'https://auth.example.com',
+      ref: 'refs/heads/main',
+      repositoryId: '812345',
+      scopes: ['data:read'],
+    }),
+  ],
+})
+
+// Serves `POST /oauth2/token` and `GET /.well-known/oauth-authorization-server`
+export default { fetch: server.fetch }
+```
+
+## Signature
+
+```ts
+// A token endpoint for one issuer
+Server.create(options)
+```
+
+## Parameters
+
+### options.fetch
+
+- **Type:** `typeof globalThis.fetch`
+- **Default:** `globalThis.fetch`
+
+Sends the requests for the keys of subject token issuers. The server contacts only issuers that a policy names.
+
+```ts
+// Sends the key requests through a fetch with logs
+Server.create({ fetch: loggedFetch, issue, issuer: 'https://auth.example.com', policies })
+```
+
+### options.issue
+
+- **Type:** `(context: Server.IssueContext) => Promise<Server.Issued>`
+
+Mints the credential that the response returns. The server calls it only after the subject token matches a policy. Its `expiresAt` must be at most `context.expiresAt`. A later expiry is a defect of `issue`, and the request receives `server_error`.
+
+```ts
+// Issues an API key with the scopes of the request, else of the policy
+async function issue(context: Server.IssueContext): Promise<Server.Issued> {
+  const key = await keys.mint({ expiresAt: context.expiresAt, scopes: context.scopes })
+  return { accessToken: key, expiresAt: context.expiresAt }
+}
+```
+
+`Server.IssueContext` holds these fields:
+
+- **`claims`:** The verified claims of the subject token.
+- **`expiresAt`:** The latest expiry of the credential, in milliseconds since the epoch. It is the `exp` of the subject token, capped by the lifetime of the policy.
+- **`policy`:** The matched policy.
+- **`request`:** The token request.
+- **`resources`:** The RFC 8707 resources that the request names, each a resource of the policy. Empty when the request names none.
+- **`scopes`:** The scopes of the credential: the requested scopes, else the scopes of the policy.
+
+`Server.Issued` holds these fields:
+
+- **`accessToken`:** The credential, such as an API key.
+- **`expiresAt`:** When the credential expires, in milliseconds since the epoch. At most `IssueContext.expiresAt`.
+- **`scopes`:** The scopes of the credential. Default: `IssueContext.scopes`.
+
+### options.issuer
+
+- **Type:** `string`
+
+The issuer of the metadata. The server derives both paths from it, so the token endpoint is `<issuer>/oauth2/token`.
+
+```ts
+// Serves the token endpoint at https://auth.example.com/oauth2/token
+Server.create({ issue, issuer: 'https://auth.example.com', policies })
+```
+
+### options.maxLifetime
+
+- **Type:** `number`
+- **Default:** `900`
+
+The longest lifetime of an issued credential, in seconds, when the matched policy sets no `maxLifetime`. The credential also expires no later than the subject token.
+
+```ts
+// Caps each credential at 5 minutes
+Server.create({ issue, issuer: 'https://auth.example.com', maxLifetime: 300, policies })
+```
+
+### options.policies
+
+- **Type:** `readonly Policy.Policy[] | ((request: Request) => Promise<readonly Policy.Policy[]>)`
+
+The trust policies, or a function that loads them for each request, such as from a database. [`Policy`](/api/server/policy) describes how a policy matches a subject token.
+
+```ts
+// Loads the policies of the database for each request
+Server.create({ issue, issuer: 'https://auth.example.com', policies: () => db.policies() })
+```
+
+A policy without claims would match every token of its issuer. `Server.create` throws a `TypeError` for such a policy in an array. A function can return one, but it never matches.
+
+## Returns
+
+- **Type:** `Server.Server`
+
+### fetch
+
+- **Type:** `(request: Request) => Promise<Response>`
+
+Serves the token endpoint and the metadata. Other paths and methods return `404` with `invalid_request`.
+
+```ts
+// Mounts the endpoint in a framework that accepts a fetch handler
+app.all('*', (c) => server.fetch(c.req.raw))
+```
+
+## Paths
+
+RFC 8414 §3.1 inserts the well-known suffix before the path of the issuer.
+
+| Issuer                     | Metadata                                           | Token endpoint            |
+| -------------------------- | -------------------------------------------------- | ------------------------- |
+| `https://auth.example.com` | `GET /.well-known/oauth-authorization-server`      | `POST /oauth2/token`      |
+| `https://example.com/auth` | `GET /.well-known/oauth-authorization-server/auth` | `POST /auth/oauth2/token` |
+
+The metadata names the token exchange grant only. The endpoint authenticates no client, since the trust policy authorizes the request.
+
+```json
+{
+  "grant_types_supported": ["urn:ietf:params:oauth:grant-type:token-exchange"],
+  "issuer": "https://auth.example.com",
+  "token_endpoint": "https://auth.example.com/oauth2/token",
+  "token_endpoint_auth_methods_supported": ["none"]
+}
+```
+
+## Token Requests
+
+The server checks a token request in this order. The first failed check returns its RFC 6749 §5.2 error with HTTP 400.
+
+1. The body is `application/x-www-form-urlencoded`. Else `invalid_request`.
+2. The body is 64 KiB (65,536 bytes) or less. Else `invalid_request`.
+3. `grant_type` is `urn:ietf:params:oauth:grant-type:token-exchange`. Else `unsupported_grant_type`.
+4. `requested_token_type` is absent or `urn:ietf:params:oauth:token-type:access_token`. Else `invalid_request`.
+5. `subject_token` is present, and `subject_token_type` is `urn:ietf:params:oauth:token-type:jwt` or `urn:ietf:params:oauth:token-type:id_token`. Else `invalid_request`.
+6. The subject token matches a policy: the signature, `iss`, `exp`, `nbf` with 60 seconds of leeway, `aud`, and the claims. Else `invalid_grant`.
+7. `scope`, when present, holds only scopes of the policy. Else `invalid_scope`.
+8. Each `resource` and `audience` field (RFC 8693 §2.1) names a resource of the policy. Else `invalid_target`.
+
+Every refusal in step 6 has the same `error_description`. So a caller cannot learn which check failed, or which policies exist.
+
+```http
+POST /oauth2/token HTTP/1.1
+Host: auth.example.com
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange
+&subject_token=eyJhbGciOiJSUzI1NiIs...
+&subject_token_type=urn%3Aietf%3Aparams%3Aoauth%3Atoken-type%3Ajwt
+&scope=data%3Aread
+```
+
+## Responses
+
+A request that passes every check receives the RFC 8693 §2.2.1 response, with `Cache-Control: no-store` and `Pragma: no-cache`. `expires_in` counts the seconds until `Issued.expiresAt`, and `scope` joins the scopes with spaces.
+
+```json
+{
+  "access_token": "<the accessToken of issue>",
+  "expires_in": 899,
+  "issued_token_type": "urn:ietf:params:oauth:token-type:access_token",
+  "scope": "data:read",
+  "token_type": "Bearer"
+}
+```
+
+A failure of `issue` or of the policy loader returns HTTP 500 with `server_error`. The response holds no detail of the failure. A failed key request is not a server error: the server caches an empty key set for a minute, and the request receives `invalid_grant`.
+
+```json
+{ "error": "server_error", "error_description": "The token exchange failed." }
+```
+
+## Errors
+
+- **`TypeError`:** `options.policies` is an array with a policy that has no claims.

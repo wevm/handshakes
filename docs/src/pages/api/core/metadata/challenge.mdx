@@ -1,0 +1,78 @@
+# Metadata.challenge [Returns the parameters of the Bearer challenge of a response]
+
+`challenge` reads the `WWW-Authenticate` header of a response ([RFC 6750 §3](https://www.rfc-editor.org/rfc/rfc6750#section-3)). An API that follows [RFC 9728 §5.1](https://www.rfc-editor.org/rfc/rfc9728#section-5.1) names the URL of its metadata there, so a client can find its authorization server. `challenge` sends no request.
+
+```ts [example.ts]
+import { Metadata } from 'handshakes'
+
+// A request without credentials receives the challenge of the API
+const response = await fetch('https://api.example.com/v1/items')
+
+// [!code hl:2]
+// Reads `resource_metadata`, `error`, and `scope` of the Bearer challenge
+const challenge = Metadata.challenge(response)
+
+if (challenge?.resourceMetadata)
+  console.error(`The metadata of the API is at ${challenge.resourceMetadata}.`)
+```
+
+A response of an API that uses [`Resource.create`](/api/server/resource/create):
+
+```http
+HTTP/1.1 401 Unauthorized
+WWW-Authenticate: Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource", error="invalid_token"
+```
+
+## Signature
+
+```ts
+// The Bearer challenge of the response, or undefined
+const challenge = Metadata.challenge(response)
+```
+
+A header can hold several challenges, such as `DPoP` and `Bearer`. `challenge` reads only the parameters that follow the `Bearer` scheme. It matches the scheme and the parameter names without regard to case, and it removes the quotes and escapes of a quoted value.
+
+## Parameters
+
+### response
+
+- **Type:** `Response`
+
+The response of the API. Only its headers are read, so the body stays unread.
+
+```ts
+// A 401 response of the API
+Metadata.challenge(response)
+```
+
+## Returns
+
+- **Type:** `Metadata.Challenge | undefined`
+
+The parameters of the `Bearer` challenge. The result is `undefined` when the response has no `WWW-Authenticate` header, or when the header has no `Bearer` challenge.
+
+### error
+
+- **Type:** `string | undefined`
+
+The RFC 6750 §3.1 error code, such as `invalid_token` or `insufficient_scope`. It is absent when the request had no credentials.
+
+### resourceMetadata
+
+- **Type:** `string | undefined`
+
+The URL of the RFC 9728 metadata of the API, from `resource_metadata`. Pass it to [`Metadata.protectedResource`](/api/core/metadata/protected-resource) as `url`, then check the `resource` of the metadata.
+
+### scope
+
+- **Type:** `string | undefined`
+
+Space-separated scopes that the API needs.
+
+## Errors
+
+`challenge` throws no error. A header that it cannot read returns `undefined`, or a challenge without the parameters.
+
+## Types
+
+- **`Metadata.Challenge`:** The returned parameters: `error`, `resourceMetadata`, and `scope`.

@@ -1,0 +1,125 @@
+# Identity.token [Returns the OIDC token that the platform signs for the running code]
+
+`Identity.token` returns the subject token itself, with no exchange. It serves APIs that accept a platform token directly, such as Vercel AI Gateway. The token must carry the requested audience as `aud`, so a token for one service never reaches another.
+
+```ts [example.ts]
+import { Identity } from 'handshakes'
+
+// Requests a GitHub Actions or Vercel token for one audience
+const token = await Identity.token({ audience: 'https://api.example.com' })
+
+const response = await fetch('https://api.example.com/v1/items', {
+  headers: { authorization: `Bearer ${token.value}` },
+})
+```
+
+## Signature
+
+```ts
+// The subject token of the first source that detects its platform
+await Identity.token(options)
+```
+
+## Parameters
+
+### options.audience
+
+- **Type:** `string`
+
+The `aud` of the token. It is required. A source that requests tokens for any audience, such as GitHub Actions, requests this audience. For a source with a fixed audience, such as GitLab CI, the client decodes the token and compares its `aud`. A mismatch throws `Identity.AudienceError`, and the token is not returned.
+
+```ts
+// Requests a token for the API, not for another service
+await Identity.token({ audience: 'https://api.example.com' })
+```
+
+### options.env
+
+- **Type:** `Source.Env`
+- **Default:** `process.env` where the runtime has one, else an empty environment
+
+The environment that the sources read.
+
+```ts
+import { Identity } from 'handshakes'
+import { Issuer } from 'handshakes/test'
+
+const issuer = await Issuer.create()
+
+// Requests the token from the local test issuer
+const env = await issuer.env({ preset: 'githubActions' })
+await Identity.token({ audience: 'https://api.example.com', env })
+```
+
+### options.fetch
+
+- **Type:** `typeof globalThis.fetch`
+- **Default:** `globalThis.fetch`
+
+The function that sends the requests of the source, such as the token request of GitHub Actions.
+
+```ts
+// Sends the request of the source through an explicit fetch
+await Identity.token({ audience: 'https://api.example.com', fetch: globalThis.fetch })
+```
+
+### options.sources
+
+- **Type:** `readonly Source.Source[]`
+- **Default:** [`Source.defaults`](/api/core/source)
+
+The sources in priority order. The first source whose `detect` returns `true` supplies the token. A detected source that fails throws, and the next source is never tried.
+
+```ts
+import { Identity, Source } from 'handshakes'
+
+// Reads only the token of Vercel
+await Identity.token({ audience: 'https://vercel.com/acme', sources: [Source.vercel()] })
+```
+
+## Returns
+
+- **Type:** `Promise<Identity.Token>`
+
+The token and its decoded claims. The claims are not verified, so they serve logs and errors only.
+
+```ts
+// Logs the source and the subject, never the token value
+console.log(token.source, token.claims['sub'], new Date(token.expiresAt))
+```
+
+## Errors
+
+- **`Identity.AudienceError`:** The token carries another `aud` than `audience`.
+- **`Identity.NotFoundError`:** No source detects its platform.
+- **`Source.RequestError`:** The detected source fails, or returns a value that is not a JWT with `exp`.
+
+```ts
+import { Identity } from 'handshakes'
+
+await Identity.token({ audience: 'https://api.example.com' }).catch((error: unknown) => {
+  // Names the sources that were checked
+  if (error instanceof Identity.NotFoundError) console.error(error.checked)
+  else throw error
+})
+```
+
+## Types
+
+### Identity.Token
+
+A subject token and its decoded claims.
+
+```ts
+// The result of Identity.token()
+type Token = {
+  /** The claims, not verified. For logs and errors only. */
+  claims: Readonly<Record<string, unknown>>
+  /** When the token expires, in milliseconds since the epoch. */
+  expiresAt: number
+  /** Name of the source, such as `githubActions`. */
+  source: string
+  /** The JWT. */
+  value: string
+}
+```

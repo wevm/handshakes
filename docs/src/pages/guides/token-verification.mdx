@@ -1,0 +1,168 @@
+# Token Verification [Verifies the bearer tokens that an API receives, and returns the 401 challenge]
+
+## Overview
+
+`Resource` from `handshakes/server` verifies the bearer token of each request to an API. It also serves the protected resource metadata ([RFC 9728](https://www.rfc-editor.org/rfc/rfc9728)), and returns the challenge of [RFC 6750](https://www.rfc-editor.org/rfc/rfc6750). A client reads the challenge to find the authorization server.
+
+`Resource` accepts two kinds of token. An access token comes from an authorization server. A subject token comes directly from a platform, with no exchange. Each option names the issuers of one kind.
+
+| Kind                         | Issuer                                       | Option                 | Checks                                                     |
+| ---------------------------- | -------------------------------------------- | ---------------------- | ---------------------------------------------------------- |
+| Access token, RFC 9068 JWT   | An authorization server, such as Better Auth | `authorizationServers` | `typ`, signature, `exp`, `nbf`, and `aud`                  |
+| Subject token, used directly | A platform, such as GitHub Actions           | `policies`             | Signature, `exp`, `nbf`, `aud`, and the claims of a policy |
+
+If `Server` issues a credential of the host itself, such as an API key, the API checks that credential as before. It needs no `Resource`.
+
+## Walkthrough
+
+### Create the Resource
+
+`resource` is the identifier of the API. Every accepted token carries it as `aud`. Creating the resource sends no request.
+
+```ts [resource.ts]
+import { Resource } from 'handshakes/server'
+
+export const resource = Resource.create({
+  // Accepts RFC 9068 access tokens of this authorization server.
+  authorizationServers: ['https://auth.example.com'],
+  resource: 'https://api.example.com',
+})
+```
+
+### Verify a Request
+
+`verify` returns `valid` with the principal, or `invalid` with an error code. It never throws for a bad token. `challenge` returns the response for an `invalid` result.
+
+```ts [api.ts]
+import { resource } from './resource.js'
+
+const metadataPath = new URL(resource.metadataUrl).pathname
+
+export default {
+  async fetch(request: Request) {
+    // Serves the RFC 9728 metadata at the well-known path of the resource.
+    if (new URL(request.url).pathname === metadataPath) return resource.metadata()
+
+    // Returns 401 or 403 with `WWW-Authenticate` for a missing or invalid token.
+    const result = await resource.verify(request)
+    if (result.status === 'invalid') return resource.challenge(result)
+
+    return Response.json({ scopes: result.principal.scopes, subject: result.principal.subject })
+  },
+}
+```
+
+The principal has `subject`, `issuer`, `scopes`, `expiresAt`, and the verified `claims`. For a subject token, `policy` holds the matched policy.
+
+### Results
+
+| Request                        | `error` of the result | Status | Header parameters                         |
+| ------------------------------ | --------------------- | ------ | ----------------------------------------- |
+| No `Authorization` header      | None                  | `401`  | `resource_metadata`                       |
+| Malformed `Authorization`      | `invalid_request`     | `401`  | `resource_metadata` and `error`           |
+| Bad, expired, or unknown token | `invalid_token`       | `401`  | `resource_metadata` and `error`           |
+| Token without a required scope | `insufficient_scope`  | `403`  | `resource_metadata`, `error`, and `scope` |
+
+```http
+HTTP/1.1 401 Unauthorized
+WWW-Authenticate: Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource", error="invalid_token"
+```
+
+If `scopes` is set, every challenge also has `scope` with the required scopes.
+
+### Access Tokens
+
+An access token passes only when each of these conditions holds:
+
+- **Type:** The header has `typ: at+jwt`, so an ID token signed with the same key does not pass.
+- **Signature:** RS256, ES256, or EdDSA (Ed25519), with a key from the discovery document of the issuer.
+- **Time:** `exp` is in the future, and `nbf` is at most 60 seconds ahead.
+- **Audience:** `aud` equals `resource` exactly.
+
+A token whose `iss` is in `authorizationServers` must be an access token. A token of another issuer goes to `policies`, so an issuer belongs to one list. An authorization server that issues one `aud` for every API needs RFC 8707 resources ([RFC 8707](https://www.rfc-editor.org/rfc/rfc8707)).
+
+## Recipes
+
+### Platform Tokens
+
+`policies` accepts platform subject tokens with no exchange. The `audience` of each policy must equal `resource`, or `Resource.create` throws a `TypeError`. The principal receives the scopes of the matched policy.
+
+```ts [resource.ts]
+import { Policy, Resource } from 'handshakes/server'
+
+export const resource = Resource.create({
+  // Accepts the GitHub Actions tokens of one repository, with no exchange.
+  policies: [
+    Policy.githubActions({
+      audience: 'https://api.example.com',
+      repositoryId: '812345',
+      scopes: ['data:read'],
+    }),
+  ],
+  resource: 'https://api.example.com',
+})
+```
+
+This setup needs no authorization server. But the API accepts the token for the full lifetime that the platform sets, and cannot narrow its scopes. The client sends the token of [`Identity.token`](/api/core/identity/token).
+
+### Metadata Route
+
+`metadataUrl` is the well-known URL of the resource (RFC 9728 §3.1). For a resource with a path, such as `https://api.example.com/v1`, the suffix comes before the path: `/.well-known/oauth-protected-resource/v1`.
+
+```ts [app.ts]
+import { Hono } from 'hono'
+import { resource } from './resource.js'
+
+const app = new Hono()
+
+// Names the authorization server, so a client discovers it from the API.
+app.get('/.well-known/oauth-protected-resource', () => resource.metadata())
+
+app.use('/v1/*', async (c, next) => {
+  const result = await resource.verify(c.req.raw)
+  if (result.status === 'invalid') return resource.challenge(result)
+  await next()
+})
+```
+
+```json
+{
+  "authorization_servers": ["https://auth.example.com"],
+  "bearer_methods_supported": ["header"],
+  "resource": "https://api.example.com",
+  "scopes_supported": ["data:read"]
+}
+```
+
+### Required Scopes
+
+`scopes` lists the scopes that every request needs. A token without one of them receives `403` with `insufficient_scope`. A route can check more scopes on the principal.
+
+```ts [api.ts]
+import { Resource } from 'handshakes/server'
+
+const resource = Resource.create({
+  authorizationServers: ['https://auth.example.com'],
+  resource: 'https://api.example.com',
+  // Every request needs `data:read`.
+  scopes: ['data:read'],
+})
+
+export async function write(request: Request) {
+  const result = await resource.verify(request)
+  if (result.status === 'invalid') return resource.challenge(result)
+
+  // A write also needs `data:write`.
+  if (!result.principal.scopes.includes('data:write'))
+    return resource.challenge({ error: 'insufficient_scope', status: 'invalid' })
+
+  return new Response(null, { status: 204 })
+}
+```
+
+## More
+
+- **Function:** [`Resource.create`](/api/server/resource/create) lists every option and return value.
+- **Discovery:** [Discovery](/guides/discovery) reads the metadata from the client.
+- **Subject tokens:** [Subject Tokens](/guides/subject-tokens) sends platform tokens from the client.
+- **Better Auth:** [Better Auth](/guides/better-auth) issues the access tokens that `authorizationServers` accepts.

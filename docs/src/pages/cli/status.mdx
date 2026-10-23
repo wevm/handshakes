@@ -1,0 +1,120 @@
+# status [Names the method that applies here and never prints a token]
+
+`handshakes status` names the source that detects its platform. For a profile, it also names the method that the client uses and the expiry of the stored grant. It sends no request, so it never refreshes or exchanges a token.
+
+```sh
+# Names the detected source, and the grant of the example profile
+handshakes status example --json
+```
+
+```json
+{
+  "checked": ["vercel", "githubActions", "gitlab", "circleci", "buildkite", "gcp"],
+  "source": null,
+  "grant": {
+    "expiresAt": 1792731000000,
+    "method": "grant",
+    "refreshable": true
+  },
+  "issuer": "https://auth.example.com",
+  "profile": "example"
+}
+```
+
+## Signature
+
+```sh
+# Without a profile, names the detected source only
+handshakes status [profile] [options]
+```
+
+If no profile applies and `--issuer` is not set, the output holds only `checked` and `source`.
+
+## Arguments
+
+### profile
+
+- **Type:** `string`
+- **Default:** `HANDSHAKES_PROFILE`, else the `default` profile
+
+The name of a profile of the [configuration](/cli/configuration).
+
+```sh
+# Names the grant of the default profile
+handshakes status
+```
+
+## Options
+
+### --client-id
+
+- **Type:** `string`
+- **Default:** `clientId` of the profile
+
+The OAuth client of the grant.
+
+```sh
+# Reads the grant of this client
+handshakes status example --client-id example-cli
+```
+
+### --issuer
+
+- **Type:** `string`
+- **Default:** `issuer` of the profile
+
+The authorization server. With `--issuer`, a profile applies.
+
+```sh
+# Reads a grant without a configuration file
+handshakes status --issuer https://auth.example.com --client-id example-cli
+```
+
+### --resource
+
+- **Type:** `string`
+- **Default:** `resource` of the profile
+
+The RFC 8707 resource of the grant.
+
+```sh
+# Reads the grant for one API
+handshakes status example --resource https://api.example.com
+```
+
+### --scope
+
+- **Type:** `string`
+- **Default:** `scope` of the profile
+
+Accepted for a uniform interface. Scopes do not select the grant.
+
+```sh
+# Reads the same grant as without --scope
+handshakes status example --scope data:read
+```
+
+## Output
+
+- **`checked`:** The names of the sources, in the order that the CLI checks them.
+- **`source`:** The name of the first source that detects its platform, or `null`.
+- **`grant`:** For a profile, the method that applies. Its fields depend on `method`.
+- **`issuer`:** For a profile, its issuer, else its token endpoint.
+- **`profile`:** For a profile, its name, or `null` for settings from flags only.
+
+The `grant` field takes one of three forms:
+
+| `method`   | Applies when                   | Other fields                                                                                    |
+| ---------- | ------------------------------ | ----------------------------------------------------------------------------------------------- |
+| `exchange` | A source detects its platform. | `source`, the name of the source.                                                               |
+| `grant`    | A grant is stored.             | `expiresAt`, `refreshable`, and `subject`, the `sub` of the access token when it is a JWT.      |
+| `none`     | No source and no grant apply.  | `checked`, the names of the sources, and `interactive`, the `interactive` option of the client. |
+
+The CLI sets no `interactive` option, so `interactive` reads `false`. In a terminal without `CI`, [`token`](/cli/token), [`exec`](/cli/exec), and [`fetch`](/cli/fetch) still run the device grant.
+
+## Errors
+
+| Error code   | Exit code | Condition                                                                   |
+| ------------ | --------- | --------------------------------------------------------------------------- |
+| `NO_PROFILE` | 2         | The profile argument names no profile, or a file does not match the schema. |
+| `FAILED`     | 1         | Another error, such as a file that is not valid JSON.                       |

@@ -1,0 +1,249 @@
+# DeviceGrant.start [Requests a device code and returns the user code]
+
+`start` sends the device authorization request of [RFC 8628 §3.1](https://www.rfc-editor.org/rfc/rfc8628#section-3.1). The user confirms the user code on the verification page, and `wait` polls the token endpoint until the server issues the grant. [`Client.create`](/api/core/client/create) uses it in `authorize`, and stores the grant.
+
+```ts [example.ts]
+import { DeviceGrant } from 'handshakes'
+
+// Requests a device code from the device authorization endpoint of the issuer
+const grant = await DeviceGrant.start({
+  clientId: 'example-cli',
+  issuer: 'https://auth.example.com',
+  scope: 'data:read',
+})
+
+// The user opens the page and confirms the code in a browser
+console.error(`Open ${grant.verificationUri} and confirm ${grant.userCode}.`)
+
+// [!code hl:2]
+// Resolves with the grant after the user approves the code
+const result = await grant.wait()
+```
+
+## Signature
+
+```ts
+// A started device grant, with the user code and a function that polls for approval
+const grant = await DeviceGrant.start(options)
+```
+
+The device authorization request and each poll are `application/x-www-form-urlencoded`. Each of them times out after 20 seconds.
+
+## Parameters
+
+### options.clientId
+
+- **Type:** `string`
+
+The OAuth client that the server registers for the device grant. Both the device authorization request and each poll send it as `client_id`.
+
+```ts
+// The client of the CLI on the authorization server
+DeviceGrant.start({ clientId: 'example-cli', issuer: 'https://auth.example.com' })
+```
+
+### options.clientSecret
+
+- **Type:** `string`
+- **Default:** `undefined`
+
+The client secret, for servers that require one on the device grant, such as Google. Both requests send it as `client_secret`.
+
+```ts
+// Reads the secret from an environment variable, never from argv
+DeviceGrant.start({
+  clientId: 'example-cli',
+  clientSecret: process.env['EXAMPLE_CLIENT_SECRET'],
+  issuer: 'https://auth.example.com',
+})
+```
+
+### options.endpoints
+
+- **Type:** `Metadata.Endpoints`
+- **Default:** `undefined`
+
+Explicit endpoints, for servers without metadata, such as a GitHub App. With `endpoints`, `start` reads no metadata. The grant names `issuer` as its issuer, else `endpoints.token`.
+
+```ts
+// A server without RFC 8414 metadata
+DeviceGrant.start({
+  clientId: 'example-cli',
+  endpoints: {
+    deviceAuthorization: 'https://auth.example.com/device/code',
+    token: 'https://auth.example.com/token',
+  },
+})
+```
+
+Without `endpoints.deviceAuthorization`, `start` throws `DeviceGrant.UnsupportedError`.
+
+### options.fetch
+
+- **Type:** `typeof globalThis.fetch`
+- **Default:** `globalThis.fetch`
+
+Sends every request: the metadata request, the device authorization request, and each poll.
+
+```ts
+// Sends the requests through a fetch with a proxy or a test server
+DeviceGrant.start({
+  clientId: 'example-cli',
+  fetch: proxyFetch,
+  issuer: 'https://auth.example.com',
+})
+```
+
+### options.issuer
+
+- **Type:** `string`
+- **Default:** `undefined`
+
+The authorization server. `start` reads its endpoints with [`Metadata.authorizationServer`](/api/core/metadata/authorization-server) (RFC 8414). It is required unless `endpoints` is set, and a `TypeError` names the fix when both are absent.
+
+```ts
+// Reads the device authorization endpoint from the metadata of the issuer
+DeviceGrant.start({ clientId: 'example-cli', issuer: 'https://auth.example.com' })
+```
+
+If the metadata has no `device_authorization_endpoint`, `start` throws `DeviceGrant.UnsupportedError`.
+
+### options.resource
+
+- **Type:** `string`
+- **Default:** `undefined`
+
+The RFC 8707 resource of the access token. The device authorization request sends it as `resource`, and the grant records it.
+
+```ts
+// Requests an access token for one API
+DeviceGrant.start({
+  clientId: 'example-cli',
+  issuer: 'https://auth.example.com',
+  resource: 'https://api.example.com',
+})
+```
+
+### options.scope
+
+- **Type:** `string`
+- **Default:** `undefined`
+
+Space-separated scopes. The device authorization request sends them as `scope`.
+
+```ts
+// Requests read access only
+DeviceGrant.start({
+  clientId: 'example-cli',
+  issuer: 'https://auth.example.com',
+  scope: 'data:read',
+})
+```
+
+## Returns
+
+- **Type:** `Promise<DeviceGrant.DeviceGrant>`
+
+The fields of the device authorization response (RFC 8628 §3.2), and `wait`.
+
+### expiresAt
+
+- **Type:** `number`
+
+When the user code expires, in milliseconds since the epoch. It derives from `expires_in` of the response.
+
+### userCode
+
+- **Type:** `string`
+
+The code that the user confirms on the verification page.
+
+### verificationUri
+
+- **Type:** `string`
+
+The verification page.
+
+### verificationUriComplete
+
+- **Type:** `string | undefined`
+
+The verification page with the user code filled in. It is present only when the server returns `verification_uri_complete`.
+
+```ts
+// Prefers the page that already holds the code
+console.error(`Open ${grant.verificationUriComplete ?? grant.verificationUri}.`)
+```
+
+### wait
+
+- **Type:** `(options?: DeviceGrant.wait.Options) => Promise<Grant.Grant>`
+
+Polls the token endpoint with the `urn:ietf:params:oauth:grant-type:device_code` grant (RFC 8628 §3.4), and resolves with the [grant](/api/core/grant) after approval. `wait` returns the grant only. [`Client.create`](/api/core/client/create) stores it.
+
+Before each poll, `wait` waits for the interval. The interval is `interval` of the device authorization response, else 5 seconds (RFC 8628 §3.5). Each error response of the token endpoint has one result:
+
+| Error                   | Result                                     |
+| ----------------------- | ------------------------------------------ |
+| `authorization_pending` | Polls again after the interval             |
+| `slow_down`             | Adds 5 seconds to the interval, then polls |
+| `access_denied`         | Throws `DeviceGrant.DeniedError`           |
+| `expired_token`         | Throws `DeviceGrant.ExpiredError`          |
+| Any other error         | Throws `DeviceGrant.RejectedError`         |
+
+If `expiresAt` passes before a poll, `wait` throws `DeviceGrant.ExpiredError` and sends no more requests. A response with HTTP 200 and an `error` field counts as an error, since some servers, such as GitHub, return errors that way.
+
+### wait options.signal
+
+- **Type:** `AbortSignal`
+- **Default:** `undefined`
+
+Stops polling. `wait` rejects with the reason of the signal.
+
+```ts
+// Stops waiting after 10 minutes
+const result = await grant.wait({ signal: AbortSignal.timeout(600_000) })
+```
+
+## Errors
+
+`start` throws:
+
+- **`DeviceGrant.RejectedError`:** The device authorization endpoint returns an RFC 6749 §5.2 error. It also has `error: 'invalid_response'` when the response has no `device_code`, `user_code`, `verification_uri`, or `expires_in`. It holds `error`, `errorDescription`, and `status`.
+- **`DeviceGrant.UnsupportedError`:** The server has no device authorization endpoint.
+- **`Metadata.NotFoundError`:** The issuer serves no valid metadata.
+- **`TypeError`:** Neither `issuer` nor `endpoints` is set.
+
+`wait` throws:
+
+- **`DeviceGrant.DeniedError`:** The user denies the code.
+- **`DeviceGrant.ExpiredError`:** The code expires before approval.
+- **`DeviceGrant.RejectedError`:** The token endpoint returns another RFC 6749 §5.2 error, such as `invalid_client`.
+- **`Grant.InvalidResponseError`:** The token response has no `access_token` or `expires_in`.
+
+Each error extends the base error of Handshakes. Its message states what failed, then the steps that resolve it, and `details` and `steps` hold the two parts.
+
+```ts
+import { DeviceGrant } from 'handshakes'
+
+const grant = await DeviceGrant.start({
+  clientId: 'example-cli',
+  issuer: 'https://auth.example.com',
+})
+
+await grant.wait().catch((error: unknown) => {
+  // [!code hl:2]
+  // A denied or expired code needs a new device grant
+  if (error instanceof DeviceGrant.DeniedError || error instanceof DeviceGrant.ExpiredError)
+    console.error(error.message)
+  else throw error
+})
+```
+
+## Types
+
+- **`DeviceGrant.Code`:** The user code, `expiresAt`, `verificationUri`, and `verificationUriComplete`. `onDeviceCode` of `Client.create` receives it.
+- **`DeviceGrant.DeviceGrant`:** A `DeviceGrant.Code` with `wait`.
+- **`DeviceGrant.start.ErrorType`:** The errors of `start`.
+- **`DeviceGrant.start.Options`:** The options of `start`.
+- **`DeviceGrant.wait.Options`:** The options of `wait`.

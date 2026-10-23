@@ -1,0 +1,115 @@
+# CircleCI [Exchanges the OIDC token of a CircleCI job]
+
+## Overview
+
+CircleCI puts an OIDC token in `CIRCLE_OIDC_TOKEN_V2` for each job that receives OIDC tokens. This token is the subject token: the JWT that the platform signs for the running code. Its `aud` is the ID of the CircleCI organization.
+
+`Source.circleci` reads the variable and sends no request, so the audience is fixed. The client requests the organization ID as the audience, then exchanges the subject token at the authorization server (RFC 8693 token exchange). A trust policy on the server matches its claims.
+
+| Audience            | Source                                         |
+| ------------------- | ---------------------------------------------- |
+| The organization ID | `Source.circleci`, from `CIRCLE_OIDC_TOKEN_V2` |
+| Any other audience  | `Source.file`, from `circleci run oidc get`    |
+
+## Walkthrough
+
+:::steps
+
+### Create the Client
+
+`Source.circleci` detects the job when `CIRCLECI` is `true`. Set `subjectAudience` to the organization ID, since the token carries no other `aud`. The client compares the two before it sends the token.
+
+```ts [test/api.test.ts]
+import { Client } from 'handshakes'
+
+const client = Client.create({
+  issuer: 'https://auth.example.com',
+  scope: 'data:read',
+  // The `aud` of CIRCLE_OIDC_TOKEN_V2: the ID of the CircleCI organization.
+  subjectAudience: 'b6a6b6f0-0000-4000-8000-000000000000',
+})
+
+const response = await client.fetch('https://api.example.com/v1/items')
+```
+
+### Add a Policy
+
+CircleCI has no preset, so write the policy with `Policy.from`. The issuer is `https://oidc.circleci.com/org/` followed by the organization ID. Match `oidc.circleci.com/project-id`, a project ID that a rename does not change.
+
+```ts [server.ts]
+import { Policy, Server } from 'handshakes/server'
+
+const server = Server.create({
+  // `keys` stands for the API key store of the host.
+  issue: async (context) => ({
+    accessToken: await keys.mint({ expiresAt: context.expiresAt, scopes: context.scopes }),
+    expiresAt: context.expiresAt,
+  }),
+  issuer: 'https://auth.example.com',
+  policies: [
+    Policy.from({
+      // The organization ID, which is the `aud` of every token of the organization.
+      audience: 'b6a6b6f0-0000-4000-8000-000000000000',
+      claims: {
+        'oidc.circleci.com/project-id': 'c1d2e3f4-0000-4000-8000-000000000000',
+        'oidc.circleci.com/vcs-ref': 'refs/heads/main',
+      },
+      id: 'circleci:c1d2e3f4:main',
+      issuer: 'https://oidc.circleci.com/org/b6a6b6f0-0000-4000-8000-000000000000',
+      scopes: ['data:read'],
+    }),
+  ],
+})
+
+export default { fetch: server.fetch }
+```
+
+A claim name with dots and slashes, such as `oidc.circleci.com/project-id`, is one top-level claim of the token. A policy matches it by its full name.
+
+:::
+
+## Recipes
+
+### Another Audience
+
+For an audience other than the organization ID, request a token with `circleci run oidc get` in the job, and write it to a file. `Source.file` of `handshakes/node` then reads the file. List it before the defaults, since the first detected source wins.
+
+```yaml [.circleci/config.yml]
+jobs:
+  test:
+    docker:
+      - image: cimg/node:lts
+    steps:
+      - checkout
+      # Writes a token with the `aud` of the authorization server.
+      - run: circleci run oidc get --claims '{"aud":"https://auth.example.com"}' > /tmp/oidc-token
+      - run: pnpm test
+```
+
+```ts [test/api.test.ts]
+import { Client, Source } from 'handshakes'
+import { Source as NodeSource } from 'handshakes/node'
+
+const client = Client.create({
+  issuer: 'https://auth.example.com',
+  // The file source comes first, so it applies before `Source.circleci`.
+  sources: [NodeSource.file({ name: 'circleci', path: '/tmp/oidc-token' }), ...Source.defaults],
+})
+```
+
+### Common Failures
+
+`Source.RequestError` and `Identity.AudienceError` state the steps that resolve them.
+
+| Error                              | Step                                                                                         |
+| ---------------------------------- | -------------------------------------------------------------------------------------------- |
+| `CIRCLE_OIDC_TOKEN_V2 is not set.` | Check that CircleCI issues OIDC tokens to this job.                                          |
+| `Identity.AudienceError`           | Request the audience that the token carries, through `subjectAudience`: the organization ID. |
+
+## More
+
+- [Token Exchange](/guides/token-exchange)
+- [Kubernetes](/guides/platforms/kubernetes)
+- [Source.file](/api/node/source/file)
+- [Policy](/api/server/policy)
+- [CircleCI OIDC documentation](https://circleci.com/docs/openid-connect-tokens/)

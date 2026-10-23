@@ -1,0 +1,139 @@
+# Issuer.create [Starts a local OIDC issuer for integration tests]
+
+The issuer listens on a random port of `127.0.0.1`. It signs RS256 tokens with a new key pair, and serves its keys and the endpoints that the platform sources call. So `Source.githubActions`, `Source.gcp`, and `Source.vercel` request tokens from it unchanged.
+
+```ts [Server.test.ts]
+import { Client } from 'handshakes'
+import { Policy } from 'handshakes/server'
+import { Issuer } from 'handshakes/test'
+
+const issuer = await Issuer.create()
+
+// Trusts the tokens of the local issuer instead of GitHub
+const policy = Policy.githubActions({
+  audience: 'https://auth.example.com',
+  issuer: issuer.url,
+  repositoryId: '812345',
+  scopes: ['data:read'],
+})
+
+// The client detects GitHub Actions from the environment of the issuer
+const client = Client.create({
+  env: await issuer.env({ preset: 'githubActions' }),
+  issuer: 'https://auth.example.com',
+})
+
+await issuer.close()
+```
+
+## Signature
+
+```ts
+// Takes no options. Each call starts a new server with a new key.
+await Issuer.create()
+```
+
+## Returns
+
+- **Type:** `Promise<Issuer.Issuer>`
+
+### url
+
+- **Type:** `string`
+
+The origin of the issuer, such as `http://127.0.0.1:53412`. It is also the `iss` of every token.
+
+```ts
+// Names the local issuer in a trust policy
+Policy.githubActions({ audience, issuer: issuer.url, repositoryId: '812345', scopes })
+```
+
+### sign
+
+- **Type:** `(options: sign.Options) => Promise<string>`
+
+Returns a signed JWT with the claims of `preset`. The header holds `alg: RS256`, `kid`, and `typ: JWT`. The payload holds the claims of the preset, `aud`, `exp`, `iat`, `iss`, `jti`, and `nbf`, then `claims`.
+
+```ts
+// Signs a token for another repository, to test a refusal
+const token = await issuer.sign({
+  audience: 'https://auth.example.com',
+  claims: { repository_id: '999999' },
+  preset: 'githubActions',
+})
+```
+
+- **`audience`:** The `aud` of the token. Required.
+- **`claims`:** Claims that replace or add to the claims of the preset. They also replace the standard claims, such as `iss`.
+- **`expiresIn`:** The lifetime in seconds. A negative value signs an expired token. Default: `300`.
+- **`preset`:** The platform whose claims the token carries. Required.
+
+### env
+
+- **Type:** `(options: env.Options) => Promise<Readonly<Record<string, string>>>`
+
+Returns the environment variables that make the source of `preset` request tokens from this issuer. Pass the result as `env`.
+
+```ts
+// Detects GitHub Actions, and requests tokens from the local issuer
+const env = await issuer.env({ preset: 'githubActions' })
+```
+
+- **`audience`:** The `aud` of a token that the environment holds directly, for `circleci`, `gitlab`, and `vercel`. Default for `circleci`: the organization ID `b6a6b6f0-0000-4000-8000-000000000000`. Default for `gitlab`: `url`. Default for `vercel`: `https://vercel.com/acme`.
+- **`preset`:** The platform. Required.
+
+### close
+
+- **Type:** `() => Promise<void>`
+
+Stops the server, and ends its open connections.
+
+```ts
+// Stops the issuer after the tests of the file
+afterAll(() => issuer.close())
+```
+
+## Presets
+
+| Preset          | Environment from `env`                                                                      |
+| --------------- | ------------------------------------------------------------------------------------------- |
+| `circleci`      | `CIRCLECI=true`, and `CIRCLE_OIDC_TOKEN_V2` with a signed token                             |
+| `gcp`           | `K_SERVICE=app`, and `GCE_METADATA_HOST` with the host of the issuer                        |
+| `githubActions` | `GITHUB_ACTIONS=true`, `ACTIONS_ID_TOKEN_REQUEST_URL`, and `ACTIONS_ID_TOKEN_REQUEST_TOKEN` |
+| `gitlab`        | `GITLAB_CI=true`, and the `<AUD>_ID_TOKEN` variable of the audience with a signed token     |
+| `vercel`        | `VERCEL=1`, and `VERCEL_OIDC_TOKEN` with a signed token                                     |
+
+Each preset signs tokens with fixed sample claims:
+
+| Preset          | Claims                                                                                                                                                                                                                                             |
+| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `circleci`      | `oidc.circleci.com/project-id`, `oidc.circleci.com/vcs-origin: github.com/acme/app`, `oidc.circleci.com/vcs-ref: refs/heads/main`, `sub`                                                                                                           |
+| `gcp`           | `azp`, `email: ci@acme.iam.gserviceaccount.com`, `email_verified: true`, `sub`                                                                                                                                                                     |
+| `githubActions` | `event_name: push`, `ref: refs/heads/main`, `repository: acme/app`, `repository_id: 812345`, `repository_owner: acme`, `repository_owner_id: 67890`, `runner_environment: github-hosted`, `sub: repo:acme/app:ref:refs/heads/main`, `workflow: CI` |
+| `gitlab`        | `namespace_id: 67890`, `namespace_path: acme`, `project_id: 812345`, `project_path: acme/app`, `ref: main`, `ref_type: branch`, `sub`                                                                                                              |
+| `vercel`        | `environment: production`, `owner: acme`, `owner_id: team_acme`, `project: app`, `project_id: prj_app`, `sub`                                                                                                                                      |
+
+## Endpoints
+
+| Path                                                             | Serves                                                                                |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `GET /.well-known/openid-configuration`                          | The discovery document, with `issuer` and `jwks_uri`                                  |
+| `GET /.well-known/jwks`                                          | The public key                                                                        |
+| `/github/token`                                                  | The GitHub token request. Needs the request token as `Bearer`. Returns `value`.       |
+| `/computeMetadata/v1/instance/service-accounts/default/identity` | The Google Cloud metadata server. Needs `Metadata-Flavor: Google`. Returns the token. |
+| `POST /vercel/token`                                             | The Vercel audience exchange. Needs a token of this issuer. Returns `token`.          |
+
+Each endpoint signs the token for the `audience` of the request, with the claims of its preset. Other paths return `404`.
+
+`Source.vercel` exchanges a token for another audience at Vercel. In a test, set its `exchangeUrl` to the issuer.
+
+```ts
+import { Identity, Source } from 'handshakes'
+
+// Exchanges the Vercel token for another audience at the local issuer
+const token = await Identity.token({
+  audience: 'https://auth.example.com',
+  env: await issuer.env({ preset: 'vercel' }),
+  sources: [Source.vercel({ exchangeUrl: `${issuer.url}/vercel/token` })],
+})
+```

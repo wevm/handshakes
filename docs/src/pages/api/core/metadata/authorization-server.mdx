@@ -1,0 +1,137 @@
+# Metadata.authorizationServer [Returns the endpoints of an authorization server]
+
+`authorizationServer` reads the metadata of an issuer: [RFC 8414](https://www.rfc-editor.org/rfc/rfc8414) first, then [OpenID Connect Discovery](https://openid.net/specs/openid-connect-discovery-1_0.html). [`Client.create`](/api/core/client/create) and [`DeviceGrant.start`](/api/core/device-grant/start) use it to find the token endpoint, the device authorization endpoint, and the revocation endpoint.
+
+```ts [example.ts]
+import { Metadata } from 'handshakes'
+
+// Reads the metadata of the issuer
+const server = await Metadata.authorizationServer({ issuer: 'https://auth.example.com' })
+
+// [!code hl:2]
+// Checks that the server supports the device grant (RFC 8628) before it starts one
+if (!server.deviceAuthorizationEndpoint) throw new Error('The server has no device grant.')
+```
+
+## Signature
+
+```ts
+// The metadata of one issuer
+const server = await Metadata.authorizationServer(options)
+```
+
+`authorizationServer` requests two URLs in order, with `Accept: application/json`. A response with an error status continues with the next URL. The first successful response is the metadata.
+
+| Order | URL for `https://auth.example.com/tenant`                                | Standard                    |
+| ----- | ------------------------------------------------------------------------ | --------------------------- |
+| 1     | `https://auth.example.com/.well-known/oauth-authorization-server/tenant` | RFC 8414 §3.1               |
+| 2     | `https://auth.example.com/tenant/.well-known/openid-configuration`       | OpenID Connect Discovery §4 |
+
+The `issuer` of the metadata must equal `options.issuer` exactly (RFC 8414 §3.3), and the metadata must have a `token_endpoint`. Otherwise `authorizationServer` throws, and requests no other URL. Each call sends its requests again, since only a client caches the metadata, once per client.
+
+## Parameters
+
+### options.fetch
+
+- **Type:** `typeof globalThis.fetch`
+- **Default:** `globalThis.fetch`
+
+Sends the requests.
+
+```ts
+// Sends the requests through a fetch with a proxy or a test server
+Metadata.authorizationServer({ fetch: proxyFetch, issuer: 'https://auth.example.com' })
+```
+
+### options.issuer
+
+- **Type:** `string`
+
+The issuer identifier. It must equal the `issuer` of the metadata, character for character, so an issuer with a trailing slash does not match one without it.
+
+```ts
+// The issuer, with no trailing slash
+Metadata.authorizationServer({ issuer: 'https://auth.example.com' })
+```
+
+## Returns
+
+- **Type:** `Promise<Metadata.AuthorizationServer>`
+
+The fields that Handshakes uses, from the metadata of RFC 8414 §2.
+
+| Field                         | Metadata field                  | Absent value |
+| ----------------------------- | ------------------------------- | ------------ |
+| `deviceAuthorizationEndpoint` | `device_authorization_endpoint` | `undefined`  |
+| `grantTypesSupported`         | `grant_types_supported`         | `[]`         |
+| `issuer`                      | `issuer`                        | Required     |
+| `revocationEndpoint`          | `revocation_endpoint`           | `undefined`  |
+| `tokenEndpoint`               | `token_endpoint`                | Required     |
+
+### deviceAuthorizationEndpoint
+
+- **Type:** `string | undefined`
+
+The RFC 8628 device authorization endpoint. Without it, the server runs no device grant.
+
+### grantTypesSupported
+
+- **Type:** `readonly string[]`
+
+The grant types that the server supports, such as `urn:ietf:params:oauth:grant-type:token-exchange`. It is empty when the metadata lists none.
+
+### issuer
+
+- **Type:** `string`
+
+The issuer identifier, equal to `options.issuer`.
+
+### revocationEndpoint
+
+- **Type:** `string | undefined`
+
+The RFC 7009 revocation endpoint.
+
+### tokenEndpoint
+
+- **Type:** `string`
+
+The token endpoint.
+
+## Errors
+
+- **`Metadata.NotFoundError`:** Neither URL returns a successful response, the metadata names another `issuer`, or it has no `token_endpoint`. A failed request or a body that is not JSON throws it too, with the original error as `cause`. It holds `issuer`.
+
+The steps of the error name both fixes: an `issuer` equal to that of the metadata, and `endpoints` for a server without metadata.
+
+```ts
+import { Metadata } from 'handshakes'
+
+await Metadata.authorizationServer({ issuer: 'https://auth.example.com/' }).catch(
+  (error: unknown) => {
+    // [!code hl:2]
+    // The trailing slash differs from the issuer of the metadata
+    if (error instanceof Metadata.NotFoundError) console.error(error.message)
+    else throw error
+  },
+)
+```
+
+## Types
+
+- **`Metadata.AuthorizationServer`:** The returned endpoints and capabilities.
+- **`Metadata.authorizationServer.ErrorType`:** The errors of `authorizationServer`.
+- **`Metadata.authorizationServer.Options`:** The options of `authorizationServer`.
+- **`Metadata.Endpoints`:** Explicit endpoints, for servers without metadata: `deviceAuthorization`, `revocation`, and `token`, which is required. `Client.create` and `DeviceGrant.start` accept them as `endpoints`, in place of the metadata of an issuer.
+
+```ts
+import { Client, type Metadata } from 'handshakes'
+
+// A server without metadata, such as a GitHub App
+const endpoints: Metadata.Endpoints = {
+  deviceAuthorization: 'https://github.com/login/device/code',
+  token: 'https://github.com/login/oauth/access_token',
+}
+
+const client = Client.create({ clientId: 'example-cli', endpoints })
+```

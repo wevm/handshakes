@@ -1,0 +1,107 @@
+# authorize [Runs the device grant and stores the grant]
+
+`handshakes authorize` runs the device authorization grant (RFC 8628) for a profile. The CLI prints a verification page and a user code. After the user approves the code in a browser, the CLI stores the grant. `login` is an alias.
+
+```sh
+# Prints the verification page and the user code, then waits for approval
+handshakes authorize example
+```
+
+```txt
+Open https://auth.example.com/device?user_code=BCDF-GHJK and confirm BCDF-GHJK.
+expiresAt: 1792731000000
+refreshable: true
+scope: "data:read"
+```
+
+The CLI writes the first line to stderr and the result to stdout. After this command, [`token`](/cli/token), [`exec`](/cli/exec), and [`fetch`](/cli/fetch) use and refresh the stored grant.
+
+## Signature
+
+```sh
+# Runs the device grant for a profile
+handshakes authorize [profile] [options]
+handshakes login [profile] [options]
+```
+
+The command runs the device grant in every environment, also in CI without a terminal. It does not check for a stored grant or a source first.
+
+## Arguments
+
+### profile
+
+- **Type:** `string`
+- **Default:** `HANDSHAKES_PROFILE`, else the `default` profile
+
+The name of a profile of the [configuration](/cli/configuration). The profile needs a `clientId`, and an `issuer` or `endpoints.deviceAuthorization`.
+
+```sh
+# Runs the device grant for the example profile
+handshakes authorize example
+```
+
+## Options
+
+### --client-id
+
+- **Type:** `string`
+- **Default:** `clientId` of the profile
+
+The OAuth client for the device grant and refresh. The server must register the client for the device grant.
+
+```sh
+# Uses another client of the same server
+handshakes authorize example --client-id example-cli
+```
+
+### --issuer
+
+- **Type:** `string`
+- **Default:** `issuer` of the profile
+
+The authorization server. With `--client-id`, it replaces a profile.
+
+```sh
+# Runs the device grant without a configuration file
+handshakes authorize --issuer https://auth.example.com --client-id example-cli
+```
+
+### --resource
+
+- **Type:** `string`
+- **Default:** `resource` of the profile
+
+The RFC 8707 resource of the access token. A grant serves one resource, so each resource needs its own `authorize`.
+
+```sh
+# Requests a grant for one API
+handshakes authorize example --resource https://api.example.com
+```
+
+### --scope
+
+- **Type:** `string`
+- **Default:** `scope` of the profile
+
+The space-separated scopes of the grant.
+
+```sh
+# Requests a refresh token too, on a server that requires offline_access
+handshakes authorize example --scope "data:read offline_access"
+```
+
+## Output
+
+- **`expiresAt`:** When the access token expires, in milliseconds since the epoch.
+- **`refreshable`:** Whether the server issued a refresh token. Without one, the grant ends when the access token expires.
+- **`scope`:** The scopes that the server granted, or `null`.
+
+The output never holds a token value.
+
+## Errors
+
+| Error code   | Exit code | Condition                                                                                                |
+| ------------ | --------- | -------------------------------------------------------------------------------------------------------- |
+| `NO_PROFILE` | 2         | No profile applies and `--issuer` is not set, or the profile argument names no profile.                  |
+| `FAILED`     | 1         | No `clientId` is set, the server has no device authorization endpoint, or the user denies the code.      |
+| `FAILED`     | 1         | The user code expires before approval, the server rejects the request, or the issuer serves no metadata. |

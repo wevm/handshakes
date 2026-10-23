@@ -1,0 +1,62 @@
+# Platforms [The platforms that sign subject tokens, and the runtimes of each entry]
+
+## Sources
+
+A source detects its platform from environment variables, then requests the subject token. `Source.defaults` holds the core sources in priority order, and the first source that detects its platform wins.
+
+| Platform       | Source                   | Entry             | Detects                                  | Audience                                 | Guide                                              |
+| -------------- | ------------------------ | ----------------- | ---------------------------------------- | ---------------------------------------- | -------------------------------------------------- |
+| Vercel         | `Source.vercel()`        | `handshakes`      | `VERCEL`, `VERCEL_OIDC_TOKEN`            | Any, through an exchange at Vercel       | [Vercel](/guides/platforms/vercel)                 |
+| GitHub Actions | `Source.githubActions()` | `handshakes`      | `GITHUB_ACTIONS`                         | Any                                      | [GitHub Actions](/guides/platforms/github-actions) |
+| GitLab CI      | `Source.gitlab()`        | `handshakes`      | `GITLAB_CI`                              | Fixed in `id_tokens` of `.gitlab-ci.yml` | [GitLab CI](/guides/platforms/gitlab)              |
+| CircleCI       | `Source.circleci()`      | `handshakes`      | `CIRCLECI`                               | Fixed: the ID of the organization        | [CircleCI](/guides/platforms/circleci)             |
+| Google Cloud   | `Source.gcp()`           | `handshakes`      | `K_SERVICE` (Cloud Run, Cloud Functions) | Any                                      | [Google Cloud](/guides/platforms/google-cloud)     |
+| Buildkite      | `Source.buildkite()`     | `handshakes/node` | `BUILDKITE`                              | Any                                      | [Buildkite](/guides/platforms/buildkite)           |
+| Kubernetes     | `Source.file()`          | `handshakes/node` | The token file exists                    | Fixed in the pod spec                    | [Kubernetes](/guides/platforms/kubernetes)         |
+
+For a source with a fixed audience, the client compares the `aud` of the token with the requested audience. A mismatch throws `Identity.AudienceError`, and the client does not send the token.
+
+:::note
+`Source.gcp()` detects Cloud Run and Cloud Functions only. Compute Engine and GKE set no variable to detect, so a source for them needs its own `detect`, such as `Source.from({ ...Source.gcp(), detect: () => true })`.
+:::
+
+## Runtimes
+
+| Entry                    | Runtimes                               | Reason                                              |
+| ------------------------ | -------------------------------------- | --------------------------------------------------- |
+| `handshakes`             | Node, Bun, Deno, and edge runtimes     | No dependencies and no Node built-ins               |
+| `handshakes/server`      | Node, Bun, Deno, and edge runtimes     | No dependencies. Verifies signatures with WebCrypto |
+| `handshakes/better-auth` | The runtimes of Better Auth            | A plugin of `@better-auth/oauth-provider`           |
+| `handshakes/node`        | Node, and runtimes with Node built-ins | Uses the file system and child processes            |
+| `handshakes/test`        | Node, and runtimes with Node built-ins | Starts a local HTTP server                          |
+| CLI                      | Node                                   | Runs as a Node program                              |
+
+## Servers
+
+The client calls only standard endpoints, so it works with any authorization server that implements them. The table names the servers of the test targets, and how each is tested.
+
+| Server            | Grant                                    | Test                                          | Guide                                                   |
+| ----------------- | ---------------------------------------- | --------------------------------------------- | ------------------------------------------------------- |
+| `Server`          | Token exchange                           | Automated, against a local HTTP server        | [Authorization Server](/guides/authorization-server)    |
+| Better Auth       | Token exchange, device grant, refresh    | Automated, against a local Better Auth server | [Better Auth](/guides/better-auth)                      |
+| OpenRouter        | Token exchange                           | No automated test yet                         | [OpenRouter](/guides/services/openrouter)               |
+| Google Cloud STS  | Token exchange                           | No automated test yet                         | [Google Cloud STS](/guides/services/google-sts)         |
+| Google OAuth      | Device grant, refresh                    | No automated test yet                         | [Google OAuth](/guides/services/google-oauth)           |
+| Vercel AI Gateway | None: accepts the subject token directly | No automated test yet                         | [Vercel AI Gateway](/guides/services/vercel-ai-gateway) |
+
+## Standards
+
+| Standard                                                                     | Use                                                     |
+| ---------------------------------------------------------------------------- | ------------------------------------------------------- |
+| [RFC 8414](https://www.rfc-editor.org/rfc/rfc8414), OpenID Connect Discovery | Reads the endpoints of an authorization server          |
+| [RFC 8628](https://www.rfc-editor.org/rfc/rfc8628)                           | Runs the device grant in `authorize`                    |
+| [RFC 6749](https://www.rfc-editor.org/rfc/rfc6749)                           | Refreshes a stored grant, and defines error responses   |
+| [RFC 7009](https://www.rfc-editor.org/rfc/rfc7009)                           | Revokes the refresh token in `revoke`                   |
+| [RFC 8693](https://www.rfc-editor.org/rfc/rfc8693)                           | Exchanges a subject token, on the client and the server |
+| [RFC 8707](https://www.rfc-editor.org/rfc/rfc8707)                           | Names the API of an access token through `resource`     |
+| [RFC 9068](https://www.rfc-editor.org/rfc/rfc9068)                           | Defines the JWT access tokens that `Resource` verifies  |
+| [RFC 9728](https://www.rfc-editor.org/rfc/rfc9728)                           | Finds the authorization server of an API                |
+
+:::note
+Grants bound to a key ([RFC 9449](https://www.rfc-editor.org/rfc/rfc9449), DPoP) are not implemented yet.
+:::
