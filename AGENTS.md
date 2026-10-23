@@ -1,18 +1,21 @@
 # Adapted from wevm/ondine
 
 Source: https://github.com/wevm/ondine/blob/main/AGENTS.md
-Source commit: `0b589ec34481856b4153526f10a0a35558a201a8`. Retrieved 2026-10-23. Ondine adapts the guidelines of `wevm/zyzz`. General TypeScript, module, testing, prose, and Git conventions are retained. Project principles, security, documentation, layout, and commands are adapted for Handshakes, with security rules from `tempoxyz/id`.
+Source commit: `0b589ec34481856b4153526f10a0a35558a201a8`. Retrieved 2026-10-23. Ondine adapts the guidelines of `wevm/zyzz`. General TypeScript, module, testing, prose, and Git conventions are retained. Project principles, security, documentation, layout, and commands are adapted for Handshakes.
 
 # Agent Guidelines
 
 ## Project Principles
 
 - Handshakes is an OAuth client library and CLI. It replaces stored API keys with short-lived access tokens: in CI and on servers through the RFC 8693 token exchange of a platform OIDC token, and on a laptop through the RFC 8628 device authorization grant.
-- Handshakes is a client. It calls only standard endpoints (RFC 8414, 8628, 6749 refresh, 7009, 8693, 8707, 9728) and uses their terms: `authorize`, `revoke`, grant, subject token, issuer, resource. It never implements an authorization server.
-- `handshakes/better-auth` adds the server side of the token exchange to `@better-auth/oauth-provider` through `extendOAuthProvider`. It extends Better Auth and never replaces a Better Auth feature.
+- Handshakes covers three roles: the client (`handshakes`, `handshakes/node`, the CLI), the authorization server (`Server` in `handshakes/server`), and the API (`Resource` in `handshakes/server`). Stay general purpose. Never add code for one product or one deployment.
+- The client calls only standard endpoints (RFC 8414, 8628, 6749 refresh, 7009, 8693, 8707, 9728) and uses their terms: `authorize`, `revoke`, grant, subject token, issuer, resource.
+- `Server` implements only the RFC 8693 token endpoint and its metadata, as a fetch handler. The host issues the credential through `issue`. `Server` stores no tokens and runs no device grant, consent, or client registration.
+- `Resource` verifies the tokens that an API receives, and serves RFC 9728 metadata and the `401` challenge.
+- `handshakes/server/better-auth` adapts `Server` to `@better-auth/oauth-provider` through `extendOAuthProvider`. It extends Better Auth and never replaces a Better Auth feature.
 - `Client` and the CLI resolve an access token in one order: a cached token, an exchange of a detected subject token, a refresh of a stored grant, an interactive device grant, then `Client.AuthorizationRequiredError`. Change this order only in `.agent/plans/handshakes.md` first.
 - A detected source that fails throws. Never fall through to the next source, since that can select a different identity.
-- Keep the core entry free of dependencies and of Node built-ins, so it runs in Node, Bun, Deno, and edge runtimes. File system and child process code lives in `handshakes/node`.
+- Keep `handshakes` and `handshakes/server` free of dependencies and of Node built-ins, so they run in Node, Bun, Deno, and edge runtimes. Verify signatures with WebCrypto. File system and child process code lives in `handshakes/node`.
 - `.agent/plans/handshakes.md` defines the public API, the phases, and the acceptance gates. Update it in the same change as an API decision.
 
 ## Security Conventions
@@ -21,7 +24,7 @@ Source commit: `0b589ec34481856b4153526f10a0a35558a201a8`. Retrieved 2026-10-23.
 - Require an explicit audience for every subject token. A token for one service never reaches another.
 - Decode, but never trust, the claims of a token on the client. Claims serve logs and errors only.
 - The client verifies a fixed-audience token's `aud` before it sends the token.
-- `handshakes/better-auth` accepts RS256 and ES256 only, matches `iss` and `aud` exactly, and matches policies on identifiers that cannot change, such as `repository_id` and `project_id`, never on names.
+- `Server` and `Resource` accept RS256 and ES256 only, match `iss` and `aud` exactly, and match policies on identifiers that cannot change, such as `repository_id` and `project_id`, never on names.
 - Never issue a token that outlives the subject token it replaces.
 - `Store.file` writes with mode 0600, writes atomically, and refreshes under a lock that covers every process. A reused refresh token can revoke every grant of the client and user.
 - Never read a client secret from argv. Read it from an environment variable that the caller names.
@@ -134,7 +137,7 @@ Applies to the README, guides, and other Markdown documentation. Prose Conventio
 
 ## Prose Conventions
 
-Applies to documentation, comments, TSDoc, interface copy, commit messages, and pull requests. Adapted from the Prose Conventions of `tempoxyz/id`.
+Applies to documentation, comments, TSDoc, interface copy, commit messages, and pull requests.
 
 - Write about the code, not about the person using it. Avoid second person outside interface copy.
 - Describe behavior in technical terms rather than by the experience it produces.
@@ -163,7 +166,7 @@ Applies to documentation, comments, TSDoc, interface copy, commit messages, and 
 - Runtime coverage is integration-only. Do not write unit tests, private-helper tests, or per-function suites disguised as integration tests.
 - Colocate integration suites and consumer type fixtures with their owning module: `Client.test.ts` and `Client.test-d.ts` beside `Client.ts`. Keep the shared harness under `test/`.
 - No mocking, stubbing, fake implementations, module replacements, fake timers, or stubbed globals. Run every flow against a real server or platform:
-  - **Authorization server:** `test/Server.ts`, a local Better Auth server with `oauthProvider`, `oauthDeviceAuthorization`, and `jwt`, on a random port with its own in-memory database.
+  - **Authorization server:** `Server` behind a local HTTP server, and `test/Server.ts`, a local Better Auth server with `oauthProvider`, `oauthDeviceAuthorization`, and `jwt`, on a random port with its own in-memory database.
   - **Subject tokens:** the `handshakes/test` issuer, which signs real tokens and serves the endpoints that platform sources call. Pass its `env()` to the source.
   - **Platforms:** a GitHub Actions job with `id-token: write`, and a Vercel preview.
   - **Processes:** the built CLI, and several processes that share one `Store.file` for lock and refresh races.
@@ -195,7 +198,7 @@ Applies to documentation, comments, TSDoc, interface copy, commit messages, and 
 ## Repository Layout
 
 - `src/`: flat PascalCase modules of the core entry, with colocated tests. `src/index.ts` re-exports them as namespaces.
-- `src/better-auth/`, `src/node/`, `src/test/`: the `handshakes/better-auth`, `handshakes/node`, and `handshakes/test` entries.
+- `src/node/`, `src/server/`, `src/server/better-auth/`, `src/test/`: the `handshakes/node`, `handshakes/server`, `handshakes/server/better-auth`, and `handshakes/test` entries.
 - `src/cli/`: the incur CLI. `bin.ts` is the entry, and each command lives in its own file.
 - `src/internal/`: helpers that no entry exports.
 - `test/`: the shared harness, such as `test/Server.ts`.

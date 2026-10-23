@@ -9,7 +9,8 @@ Short-lived OAuth tokens for workloads and CLIs, in place of stored API keys.
 
 - **CI and servers:** Handshakes exchanges the platform's OIDC token, such as a GitHub Actions or Vercel token, for an access token ([RFC 8693](https://www.rfc-editor.org/rfc/rfc8693)).
 - **Laptops:** Handshakes runs the device authorization grant ([RFC 8628](https://www.rfc-editor.org/rfc/rfc8628)), stores the grant, and refreshes it.
-- **Servers:** `handshakes/better-auth` adds the token exchange to a [Better Auth](https://www.better-auth.com) authorization server.
+- **Authorization servers:** `handshakes/server` serves the token exchange as a fetch handler. `handshakes/server/better-auth` adds it to a [Better Auth](https://www.better-auth.com) server.
+- **APIs:** `handshakes/server` verifies the tokens that an API receives, and serves the metadata that clients use to find the authorization server.
 
 ```ts
 import { Client } from 'handshakes'

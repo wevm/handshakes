@@ -6,9 +6,9 @@ Handshakes is an OAuth client library and CLI that replaces stored API keys with
 
 - In CI and on servers, it exchanges the platform's OIDC token for an access token ([RFC 8693](https://www.rfc-editor.org/rfc/rfc8693)).
 - On a laptop, it runs the device authorization grant ([RFC 8628](https://www.rfc-editor.org/rfc/rfc8628)) and refreshes the grant.
-- `handshakes/better-auth` adds token exchange to a [Better Auth](https://www.better-auth.com) authorization server, so both sides of the handshake ship and test together.
+- `handshakes/server` serves the token exchange as a fetch handler, and verifies access tokens for an API. `handshakes/server/better-auth` adds the same exchange to a [Better Auth](https://www.better-auth.com) authorization server. Both sides of the handshake ship and test together.
 
-Handshakes is a client. It calls only standard OAuth endpoints, so it works with any authorization server that implements them, such as Better Auth, Google, or OpenRouter.
+The client calls only standard OAuth endpoints, so it works with any authorization server that implements them, such as Better Auth, Google, or OpenRouter. The server entry implements only the token exchange endpoint and token verification. The host issues the credential.
 
 ## Goals
 
@@ -19,10 +19,42 @@ Handshakes is a client. It calls only standard OAuth endpoints, so it works with
 
 ## Non-goals
 
-- An authorization server. Better Auth fills that role, and `handshakes/better-auth` extends it.
+- A full authorization server. The server entry stores no tokens and runs no device grant, consent, or client registration.
 - A secret vault.
 - Browser sign-in.
 - Onchain access keys.
+
+## Roles
+
+Handshakes covers the three roles of OAuth.
+
+```mermaid
+sequenceDiagram
+  participant C as Client (handshakes)
+  participant AS as Authorization server
+  participant API as API (resource server)
+  C->>AS: 1. Subject token (RFC 8693), or device grant (RFC 8628)
+  AS-->>C: 2. Access token
+  C->>API: 3. Authorization: Bearer
+  API->>API: 4. Verify the token
+  API-->>C: 5. Response, or 401 with resource_metadata
+```
+
+| Role                 | Entry                                                              | Responsibility                                                                                      |
+| -------------------- | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------- |
+| Client               | `handshakes`, `handshakes/node`, the CLI                           | Detect the subject token or run the device grant, exchange or refresh, cache, and attach the token  |
+| Authorization server | `handshakes/server` (`Server`), or `handshakes/server/better-auth` | Verify the subject token, match a policy, and return the credential that the host issues            |
+| API                  | `handshakes/server` (`Resource`)                                   | Verify the access token or a subject token, serve RFC 9728 metadata, and return the `401` challenge |
+
+An API can take one of three setups:
+
+| Setup                                 | Authorization server                                     | API                                                                        |
+| ------------------------------------- | -------------------------------------------------------- | -------------------------------------------------------------------------- |
+| Exchange for the API's own credential | `Server` in the API, with `issue` that mints an API key  | The existing check of the API key                                          |
+| Exchange at a separate server         | Better Auth with `tokenExchange`, or any RFC 8693 server | `Resource` with `authorizationServers`                                     |
+| No exchange                           | None                                                     | `Resource` with `policies`, which accepts platform subject tokens directly |
+
+The client is the same in each setup. The last setup is the least work, but the API accepts a token for the full lifetime that the platform sets, and cannot narrow its scopes.
 
 ## Model
 
@@ -101,18 +133,20 @@ Only steps 1 to 3 change between platforms.
 
 ## Package
 
-One package, `handshakes`, with four entries and a bin.
+One package, `handshakes`, with five entries and a bin.
 
-| Entry                    | Contents                                                                       |
-| ------------------------ | ------------------------------------------------------------------------------ |
-| `handshakes`             | `Client`, `DeviceGrant`, `Exchange`, `Identity`, `Metadata`, `Source`, `Store` |
-| `handshakes/better-auth` | `Policy`, `tokenExchange`                                                      |
-| `handshakes/node`        | `NodeSource`, and `Store` with `file` and `keychain`                           |
-| `handshakes/test`        | `Issuer`                                                                       |
-| bin `handshakes`         | The CLI                                                                        |
+| Entry                           | Contents                                                                       |
+| ------------------------------- | ------------------------------------------------------------------------------ |
+| `handshakes`                    | `Client`, `DeviceGrant`, `Exchange`, `Identity`, `Metadata`, `Source`, `Store` |
+| `handshakes/server`             | `Policy`, `Resource`, `Server`                                                 |
+| `handshakes/server/better-auth` | `tokenExchange`                                                                |
+| `handshakes/node`               | `NodeSource`, and `Store` with `file` and `keychain`                           |
+| `handshakes/test`               | `Issuer`                                                                       |
+| bin `handshakes`                | The CLI                                                                        |
 
 - The core entry has no dependencies. It runs in Node, Bun, Deno, and edge runtimes.
 - `handshakes/node` uses `fs` and child processes.
+- `handshakes/server` has no dependencies. It verifies RS256 and ES256 signatures with WebCrypto, so it runs on edge runtimes too.
 - `@vercel/oidc`, `better-auth`, and `@better-auth/oauth-provider` are optional peers.
 
 ## TypeScript API
@@ -429,14 +463,207 @@ const token = await Identity.token({ audience: 'https://id.example.com', env })
 await issuer.close()
 ```
 
-### `handshakes/better-auth`
+### `handshakes/server`
 
-Adds the RFC 8693 grant to `@better-auth/oauth-provider` through `extendOAuthProvider`.
+The server side of the handshake. Each part is framework-neutral: a fetch handler, or a function of a `Request`.
+
+| Export     | Role                                                                                            |
+| ---------- | ----------------------------------------------------------------------------------------------- |
+| `Server`   | The RFC 8693 token endpoint and its RFC 8414 metadata. The host issues the credential.          |
+| `Resource` | Verification of the tokens that an API receives, the RFC 9728 metadata, and the `401` challenge |
+| `Policy`   | Trust policies that map a subject token to scopes and a lifetime                                |
+
+#### `Server`
+
+```mermaid
+sequenceDiagram
+  participant C as Client
+  participant S as Server (fetch)
+  participant P as Platform JWKS
+  participant H as issue()
+  C->>S: 1. POST /oauth2/token, subject_token
+  S->>P: 2. Fetch keys, cached
+  S->>S: 3. Verify iss, aud, exp, alg. Match a policy
+  S->>H: 4. issue({ claims, expiresAt, policy, request })
+  H-->>S: 5. { accessToken, expiresAt, scope }
+  S-->>C: 6. RFC 8693 response, or invalid_grant
+```
+
+```ts
+import { Policy, Server } from 'handshakes/server'
+
+const server = Server.create({
+  // Mints the credential of the host. `expiresAt` already ends no later than the subject token.
+  issue: async (context) => ({
+    accessToken: await keys.mint({ expiresAt: context.expiresAt, scopes: context.policy.scopes }),
+    expiresAt: context.expiresAt,
+  }),
+  issuer: 'https://api.example.com',
+  policies: [
+    Policy.githubActions({
+      audience: 'https://api.example.com',
+      ref: 'refs/heads/main',
+      repositoryId: '812345',
+      scopes: ['data:read'],
+    }),
+  ],
+})
+
+// Serves POST /oauth2/token and /.well-known/oauth-authorization-server.
+export default { fetch: server.fetch }
+```
+
+```ts
+declare function create(options: create.Options): Server
+
+declare namespace create {
+  type Options = {
+    /** Default: `globalThis.fetch`, for JWKS requests. */
+    fetch?: typeof globalThis.fetch | undefined
+    /** Mints the credential that the response returns. */
+    issue: (context: IssueContext) => Promise<Issued>
+    /** `issuer` of the metadata, and the default `aud` of subject tokens. */
+    issuer: string
+    /** In seconds. Caps every issued credential. Default: 900. */
+    maxLifetime?: number | undefined
+    /** Policies, or a function that loads them for a request, such as from a database. */
+    policies: readonly Policy[] | ((request: Request) => Promise<readonly Policy[]>)
+  }
+}
+
+type IssueContext = {
+  /** Verified claims of the subject token. */
+  claims: Readonly<Record<string, unknown>>
+  /** The latest expiry the credential may have: the subject token's `exp`, the policy, and `maxLifetime`. */
+  expiresAt: number
+  /** The matched policy. */
+  policy: Policy
+  request: Request
+}
+
+type Issued = {
+  accessToken: string
+  expiresAt: number
+  /** Default: the scopes of the policy. */
+  scope?: string | undefined
+}
+
+type Server = {
+  /** Serves the token endpoint and the metadata. Other paths return `404`. */
+  fetch: (request: Request) => Promise<Response>
+}
+```
+
+#### `Resource`
+
+An API that receives tokens uses `Resource`. It accepts two kinds of token:
+
+| Kind                         | Issuer                                                    | Option                 |
+| ---------------------------- | --------------------------------------------------------- | ---------------------- |
+| Access token, RFC 9068 JWT   | An authorization server, such as Better Auth              | `authorizationServers` |
+| Subject token, used directly | A platform, such as GitHub Actions or Vercel. No exchange | `policies`             |
+
+If `Server` issues the host's own credential, such as an API key, the API checks that credential as before and needs no `Resource`.
+
+```ts
+import { Resource } from 'handshakes/server'
+
+const resource = Resource.create({
+  authorizationServers: ['https://auth.example.com'],
+  resource: 'https://api.example.com',
+})
+
+// RFC 9728 metadata names the authorization server, so clients discover it.
+app.get('/.well-known/oauth-protected-resource', () => resource.metadata())
+
+app.use(async (c, next) => {
+  const result = await resource.verify(c.req.raw)
+  // 401 with `WWW-Authenticate: Bearer resource_metadata="…", error="invalid_token"`
+  if (result.status === 'invalid') return resource.challenge(result)
+  c.set('principal', result.principal)
+  await next()
+})
+```
+
+```ts
+declare function create(options: create.Options): Resource
+
+declare namespace create {
+  type Options = {
+    /** Issuers whose RFC 9068 access tokens the API accepts. */
+    authorizationServers?: readonly string[] | undefined
+    fetch?: typeof globalThis.fetch | undefined
+    /** Platform subject tokens that the API accepts without an exchange. */
+    policies?: readonly Policy[] | undefined
+    /** The API itself. Every accepted token has it as `aud`. */
+    resource: string
+    /** Scopes that every request needs. */
+    scopes?: readonly string[] | undefined
+  }
+}
+
+type Resource = {
+  /** Returns the `401` response with the RFC 6750 and RFC 9728 `WWW-Authenticate` header. */
+  challenge: (result: Invalid) => Response
+  /** Returns the RFC 9728 metadata response. */
+  metadata: () => Response
+  /** Verifies the bearer token of the request. Never throws for a bad token. */
+  verify: (request: Request) => Promise<Valid | Invalid>
+}
+
+type Valid = { principal: Principal; status: 'valid' }
+type Invalid = {
+  error: 'insufficient_scope' | 'invalid_request' | 'invalid_token'
+  status: 'invalid'
+}
+
+type Principal = {
+  claims: Readonly<Record<string, unknown>>
+  expiresAt: number
+  issuer: string
+  /** Set for a subject token that a policy accepted. */
+  policy?: Policy | undefined
+  scopes: readonly string[]
+  subject: string
+}
+```
+
+- An access token needs `typ: at+jwt`, so an ID token signed with the same key does not pass.
+- `aud` must equal `resource` exactly. An authorization server that issues one `aud` for every API does not meet this, and needs RFC 8707 resources.
+
+#### `Policy`
+
+```ts
+type Policy = {
+  /** Exact `aud` of the subject token. */
+  audience: string
+  /** Exact claim matches. An array matches any of its values. */
+  claims: Readonly<Record<string, string | readonly string[]>>
+  /** OAuth client that receives the issued token. Used by the Better Auth adapter. */
+  clientId?: string | undefined
+  id: string
+  /** Exact `iss`. Keys come from its JWKS. */
+  issuer: string
+  /** In seconds. The issued credential also expires no later than the subject token. Default: 900. */
+  maxLifetime?: number | undefined
+  /** Scopes of the issued credential. */
+  scopes: readonly string[]
+}
+```
+
+- `Policy.githubActions({ audience, ref?, repositoryId, scopes, workflow? })` and `Policy.vercel({ audience, environment?, ownerId, projectId, scopes })` require identifiers that cannot change. A preset rejects a policy that matches names only, since a renamed or re-created repository keeps its name.
+- `Policy.from(policy)` types a custom policy.
+- Verification accepts RS256 and ES256 only, an exact `iss`, and an exact `aud`. It has no single-use `jti` rule, since Vercel reuses one subject token for up to 90 minutes.
+
+### `handshakes/server/better-auth`
+
+Adds the same exchange to `@better-auth/oauth-provider` through `extendOAuthProvider`. `issue` calls `provider.issueTokens`, so the client receives Better Auth access tokens.
 
 ```ts
 import { betterAuth } from 'better-auth'
 import { oauthProvider } from '@better-auth/oauth-provider'
-import { Policy, tokenExchange } from 'handshakes/better-auth'
+import { Policy } from 'handshakes/server'
+import { tokenExchange } from 'handshakes/server/better-auth'
 
 export const auth = betterAuth({
   plugins: [
@@ -449,7 +676,7 @@ export const auth = betterAuth({
 
 await auth.api.createTrustPolicy({
   body: Policy.githubActions({
-    audience: 'https://id.example.com',
+    audience: 'https://auth.example.com',
     clientId: 'ci',
     ref: 'refs/heads/main',
     repositoryId: '812345',
@@ -458,27 +685,7 @@ await auth.api.createTrustPolicy({
 })
 ```
 
-```ts
-type Policy = {
-  /** Exact `aud` of the subject token. */
-  audience: string
-  /** Exact claim matches. An array matches any of its values. */
-  claims: Readonly<Record<string, string | readonly string[]>>
-  /** OAuth client that receives the issued token. */
-  clientId: string
-  id: string
-  /** Exact `iss`. Keys come from its JWKS. */
-  issuer: string
-  /** In seconds. The issued token also expires no later than the subject token. Default: 900. */
-  maxLifetime?: number | undefined
-  /** Scopes of the issued token. */
-  scopes: readonly string[]
-}
-```
-
-- `Policy.githubActions({ audience, clientId, ref?, repositoryId, scopes, workflow? })` and `Policy.vercel({ audience, clientId, environment?, ownerId, projectId, scopes })` require identifiers that cannot change. A preset rejects a policy that matches names only, since a renamed or re-created repository keeps its name.
-- The plugin uses the `grants` slot, not `clientAuthentication`. The `clientAuthentication` contract requires a single-use `jti` and a lifetime of `assertionMaxLifetime` (300 seconds by default) or less. Vercel reuses one subject token for up to 90 minutes.
-- It accepts RS256 and ES256 only, and an exact `aud`.
+- The plugin uses the `grants` slot, not `clientAuthentication`. The `clientAuthentication` contract requires a single-use `jti` and a lifetime of `assertionMaxLifetime` (300 seconds by default) or less.
 - It adds a `trustPolicy` table, and the `createTrustPolicy`, `listTrustPolicies`, and `deleteTrustPolicy` endpoints.
 - It records the `iss` and `sub` of the subject token with each issued token, for audit.
 
@@ -612,14 +819,15 @@ There is no `token` tool, so a token never enters the context of a model.
 
 No mocks, stubs, or stubbed globals. Every test runs against a real server or a real platform.
 
-| Layer                         | Real counterpart                                                                                         |
-| ----------------------------- | -------------------------------------------------------------------------------------------------------- |
-| Sources                       | `handshakes/test` issuer with `issuer.env()`, and a GitHub Actions job with `id-token: write`            |
-| Device grant, refresh, revoke | A local Better Auth server: memory adapter, `oauthProvider`, `oauthDeviceAuthorization`, and `jwt`       |
-| Exchange                      | The same server with `handshakes/better-auth`, fed by the test issuer                                    |
-| Interoperability              | Google STS from GitHub Actions in CI. Google OAuth by hand. OpenRouter when a Business plan is available |
-| Races                         | Several processes that share one `Store.file`                                                            |
-| CLI                           | The built bin against the local server                                                                   |
+| Layer                         | Real counterpart                                                                                                                        |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Sources                       | `handshakes/test` issuer with `issuer.env()`, and a GitHub Actions job with `id-token: write`                                           |
+| Device grant, refresh, revoke | A local Better Auth server: memory adapter, `oauthProvider`, `oauthDeviceAuthorization`, and `jwt`                                      |
+| Exchange                      | `Server` behind a local HTTP server, and the local Better Auth server with `handshakes/server/better-auth`, both fed by the test issuer |
+| Resource                      | `Resource` against tokens of the local Better Auth server and of the test issuer                                                        |
+| Interoperability              | Google STS from GitHub Actions in CI. Google OAuth by hand. OpenRouter when a Business plan is available                                |
+| Races                         | Several processes that share one `Store.file`                                                                                           |
+| CLI                           | The built bin against the local server                                                                                                  |
 
 `test/Server.ts` starts the local Better Auth server on a random port. A test approves a user code through the server's own approval endpoint, as a signed-in test user.
 
@@ -628,7 +836,7 @@ No mocks, stubs, or stubbed globals. Every test runs against a real server or a 
 ### Phase 0: scaffold
 
 - Repository, pnpm workspace, Vite+, zile, Changesets, CI (check, types, test), and a CLI that prints its help.
-- The four entries, empty.
+- The entries, empty.
 - `test/Server.ts`.
 
 Done when `pnpm check` and `pnpm test` pass, with one test that reads the metadata of the local server.
@@ -671,15 +879,19 @@ Client:
 - `parameters` and `subjectAudience` as functions of the source.
 - `endpoints` for servers without metadata.
 
-Server, `handshakes/better-auth`:
+Server, `handshakes/server`:
+
+- `Server.create`: the token endpoint, its metadata, and `issue`.
+- JWKS fetch and cache, RS256 and ES256 with WebCrypto, exact `iss` and `aud`, and a lifetime that ends no later than the subject token.
+- `Policy.githubActions`, `Policy.vercel`, and `Policy.from`.
+
+Server, `handshakes/server/better-auth`:
 
 - `tokenExchange`, the `trustPolicy` table, and its endpoints.
-- JWKS fetch and cache, RS256 and ES256, exact `aud`, and a lifetime that ends no later than the subject token.
-- `Policy.githubActions` and `Policy.vercel`.
 
 Tests:
 
-- Test issuer against the local server: a match, a wrong repository, a wrong `aud`, an expired token, `alg: none`, and an unknown issuer.
+- Test issuer against `Server` and against the local Better Auth server: a match, a wrong repository, a wrong `aud`, an expired token, `alg: none`, and an unknown issuer.
 - A GitHub Actions job that reads a Google Cloud Storage bucket through Google STS.
 - OpenRouter, when a Business plan is available.
 
@@ -687,13 +899,14 @@ Done when a CI workflow with no secrets calls a protected API, and the same code
 
 ### Phase 4: discovery, agents, more platforms
 
+- `Resource.create`: `verify`, `metadata`, and `challenge`.
 - `Metadata.protectedResource`, `Metadata.challenge`, and `Client.discover`.
 - CLI: `fetch`, and `--mcp` with `fetch` and `status`.
 - `Source.circleci` and `NodeSource.buildkite`.
 - `Store.keychain`.
 - GitHub App device flow, which has no metadata and needs `endpoints`.
 
-Done when `handshakes fetch` works against the local server without a profile, and an agent calls it through MCP.
+Done when `handshakes fetch` works without a profile against an API that uses `Resource`, and an agent calls it through MCP.
 
 ### Phase 5: hardening and 1.0
 
@@ -701,17 +914,7 @@ Done when `handshakes fetch` works against the local server without a profile, a
 - A security review: token values in errors and logs, file permissions, and the env of `exec`.
 - Docs: one guide for each platform, and examples for AI Gateway, OpenRouter, and Google STS.
 - API freeze, and 1.0 through Changesets.
-- A proposal of `handshakes/better-auth` to Better Auth.
-
-## First adopter: Tempo
-
-The track starts after phase 3. The laptop path can start after phase 2, since Tempo ID already serves the device grant and refresh.
-
-1. Tempo ID enables `handshakes/better-auth`, and its admin CLI manages trust policies.
-2. The Tempo API accepts Tempo ID access tokens as a principal, verified through Tempo ID's JWKS.
-3. Tempo's preview CI replaces its stored API key secret with `handshakes exec`.
-4. `tempo-id login` writes its OAuth tokens to the Handshakes store, so one sign-in serves both CLIs.
-5. The Tempo API serves RFC 9728 metadata, so `handshakes fetch` needs no profile.
+- A proposal of `handshakes/server/better-auth` to Better Auth.
 
 ## Test targets
 
@@ -726,7 +929,7 @@ The track starts after phase 3. The laptop path can start after phase 2, since T
 ## Risks and open questions
 
 - `extendOAuthProvider` is new in `@better-auth/oauth-provider`. Pin the version, and run the plugin tests on every upgrade.
-- `handshakes/better-auth` can stay here or move to Better Auth after 1.0.
+- `handshakes/server/better-auth` can stay here or move to Better Auth after 1.0.
 - File locks behave differently on Windows. Test the lock method there before phase 2 ends.
 - `Source.vercel` depends on `@vercel/oidc` for other audiences. Own the request later if the peer becomes a problem.
 - `exec` puts the token in the environment of the child, which other processes of the same user can read. This is acceptable for a token that expires in minutes.

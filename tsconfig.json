@@ -8,8 +8,9 @@
     "target": "esnext",
     "paths": {
       "handshakes": ["./src/index.ts"],
-      "handshakes/better-auth": ["./src/better-auth/index.ts"],
       "handshakes/node": ["./src/node/index.ts"],
+      "handshakes/server": ["./src/server/index.ts"],
+      "handshakes/server/better-auth": ["./src/server/better-auth/index.ts"],
       "handshakes/test": ["./src/test/index.ts"]
     },
     "types": ["node", "vite-plus/test/globals"],
