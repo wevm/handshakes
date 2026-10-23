@@ -7,7 +7,7 @@ Source commit: `0b589ec34481856b4153526f10a0a35558a201a8`. Retrieved 2026-10-23.
 
 ## Project Principles
 
-- Handshakes is an OAuth client library and CLI. It replaces stored API keys with short-lived access tokens: in CI and on servers through the RFC 8693 token exchange of a platform OIDC token, and on a laptop through the RFC 8628 device authorization grant.
+- Handshakes is an OAuth client library and CLI. It replaces stored API keys with short-lived access tokens: in CI and on servers through the RFC 8693 token exchange of a platform OIDC token, and on a device (such as a laptop) through the RFC 8628 device authorization grant.
 - Handshakes covers three roles: the client (`handshakes`, `handshakes/node`, the CLI), the authorization server (`Server` in `handshakes/server`), and the API (`Resource` in `handshakes/server`). Stay general purpose. Never add code for one product or one deployment.
 - The client calls only standard endpoints (RFC 8414, 8628, 6749 refresh, 7009, 8693, 8707, 9728) and uses their terms: `authorize`, `revoke`, grant, subject token, issuer, resource.
 - `Server` implements only the RFC 8693 token endpoint and its metadata, as a fetch handler. The host issues the credential through `issue`. `Server` stores no tokens and runs no device grant, consent, or client registration.
@@ -126,6 +126,7 @@ Source commit: `0b589ec34481856b4153526f10a0a35558a201a8`. Retrieved 2026-10-23.
 Applies to the README, guides, and other Markdown documentation. Prose Conventions also apply.
 
 - Write for developers who know HTTP and have used an API key. Define OAuth terms at first use, and use the RFC term everywhere after.
+- Call a laptop or workstation a device. At first use in a document, write "a device (such as a laptop)".
 - Explain behavior through a request, its response, and the code that sends it.
 - Keep guides platform-neutral. When setup differs by platform, such as GitHub Actions or Vercel, show every platform.
 - Organize each guide into Overview, Walkthrough, Recipes, and More sections. Give each platform and each test target a guide.

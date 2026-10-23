@@ -56,7 +56,7 @@ sequenceDiagram
 
 ### Device Grant
 
-On a laptop, the client runs the device grant once and stores the grant. After that, it refreshes the grant before the access token expires.
+On a device (such as a laptop), the client runs the device grant once and stores the grant. After that, it refreshes the grant before the access token expires.
 
 ```mermaid
 sequenceDiagram
@@ -87,7 +87,7 @@ Read github.com/wevm/handshakes and replace the stored API keys of my project wi
 
 - **Short-lived:** Code stores no long-lived credential. An access token expires in minutes, and an exchanged token never outlives the subject token (the OIDC token of the platform) that it replaces.
 - **Standard:** The client calls only standard OAuth endpoints, so it works with any authorization server that implements them, such as Better Auth or Google.
-- **Universal:** One resolution order applies in CI, serverless functions, containers, and laptops.
+- **Universal:** One resolution order applies in CI, serverless functions, containers, and devices.
 - **Portable:** The core and server entries have no dependencies and no Node built-ins. They run in Node, Bun, Deno, and edge runtimes.
 - **Explicit:** Every subject token has an explicit audience. A detected source that fails throws, and never falls through to a different identity.
 - **Tested:** Every test runs against a real authorization server or a real platform, with no mocks.
@@ -95,7 +95,7 @@ Read github.com/wevm/handshakes and replace the stored API keys of my project wi
 ## Features
 
 - **Token Exchange:** Exchanges the OIDC token of GitHub Actions, Vercel, GitLab, CircleCI, Google Cloud, or Buildkite for an access token ([RFC 8693](https://www.rfc-editor.org/rfc/rfc8693)).
-- **Device Authorization:** Runs the device authorization grant on a laptop ([RFC 8628](https://www.rfc-editor.org/rfc/rfc8628)), then stores and refreshes the grant.
+- **Device Authorization:** Runs the device authorization grant on a device ([RFC 8628](https://www.rfc-editor.org/rfc/rfc8628)), then stores and refreshes the grant.
 - **Subject Tokens:** Returns the platform token itself, for APIs that accept it directly, such as Vercel AI Gateway.
 - **Discovery:** Finds the authorization server of an API from its metadata ([RFC 9728](https://www.rfc-editor.org/rfc/rfc9728), [RFC 8414](https://www.rfc-editor.org/rfc/rfc8414)).
 - **Grant Stores:** Keeps grants in memory, in a file with a lock across processes, or in the system keychain.
@@ -112,14 +112,14 @@ The examples below use `auth.example.com` as the authorization server, and `api.
 
 ### Client
 
-`Client` returns an access token for one API. In CI, it exchanges the OIDC token of the platform. On a laptop, it runs the device grant and refreshes the stored grant.
+`Client` returns an access token for one API. In CI, it exchanges the OIDC token of the platform. On a device, it runs the device grant and refreshes the stored grant.
 
 ```ts
 import { Client } from 'handshakes'
 import { Store } from 'handshakes/node'
 
 const client = Client.create({
-  // OAuth client for the device grant. Required on a laptop only.
+  // OAuth client for the device grant. Required on a device only.
   clientId: 'example-cli',
   issuer: 'https://auth.example.com',
   scope: 'data:read',

@@ -304,7 +304,7 @@ export function create(options: create.Options): Client {
 
 export declare namespace create {
   type Options = {
-    /** OAuth client for the device grant and refresh. Required on a laptop. */
+    /** OAuth client for the device grant and refresh. Required on a device, such as a laptop. */
     clientId?: string | undefined
     /** Client secret, for servers that require one, such as Google. */
     clientSecret?: string | undefined

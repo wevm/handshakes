@@ -5,7 +5,7 @@ Status: phases 0 to 4 done, except manual and external checks: Vercel AI Gateway
 Handshakes is an OAuth client library and CLI that replaces stored API keys with short-lived access tokens.
 
 - In CI and on servers, it exchanges the platform's OIDC token for an access token ([RFC 8693](https://www.rfc-editor.org/rfc/rfc8693)).
-- On a laptop, it runs the device authorization grant ([RFC 8628](https://www.rfc-editor.org/rfc/rfc8628)) and refreshes the grant.
+- On a device (such as a laptop), it runs the device authorization grant ([RFC 8628](https://www.rfc-editor.org/rfc/rfc8628)) and refreshes the grant.
 - `handshakes/server` serves the token exchange as a fetch handler, and verifies access tokens for an API. `handshakes/better-auth` adds the same exchange to a [Better Auth](https://www.better-auth.com) authorization server. Both sides of the handshake ship and test together.
 
 The client calls only standard OAuth endpoints, so it works with any authorization server that implements them, such as Better Auth, Google, or OpenRouter. The server entry implements only the token exchange endpoint and token verification. The host issues the credential.
@@ -13,7 +13,7 @@ The client calls only standard OAuth endpoints, so it works with any authorizati
 ## Goals
 
 - Code that calls an API stores no long-lived credential.
-- One resolution order for every runtime: CI, serverless, containers, and laptops.
+- One resolution order for every runtime: CI, serverless, containers, and devices.
 - Only standard endpoints and standard terms.
 - No dependencies in the core entry.
 
@@ -123,7 +123,7 @@ Only steps 1 to 3 change between platforms.
 | Standard                 | Use                                   | Phase |
 | ------------------------ | ------------------------------------- | ----- |
 | RFC 8414, OIDC discovery | Endpoint discovery                    | 2     |
-| RFC 8628                 | `authorize` on a laptop               | 2     |
+| RFC 8628                 | `authorize` on a device               | 2     |
 | RFC 6749 refresh grant   | Keeping a stored grant current        | 2     |
 | RFC 7009                 | `revoke`                              | 2     |
 | RFC 8693                 | Token exchange, client and server     | 3     |
@@ -173,7 +173,7 @@ declare function create(options: create.Options): Client
 
 declare namespace create {
   type Options = {
-    /** OAuth client for `authorize` and refresh. Required on a laptop. */
+    /** OAuth client for `authorize` and refresh. Required on a device. */
     clientId?: string | undefined
     /** Client secret, for servers that require one on the device grant, such as Google. */
     clientSecret?: string | undefined
@@ -881,7 +881,7 @@ Done when `pnpm check` and `pnpm test` pass, with one test that reads the metada
 
 Done when a GitHub Actions job verifies its own token against the JWKS of GitHub, and a request to Vercel AI Gateway succeeds with `handshakes token` after `vercel env pull`.
 
-### Phase 2: grants on a laptop
+### Phase 2: grants on a device
 
 - `Metadata.authorizationServer`, memoized for each issuer.
 - `DeviceGrant.start` and `wait`, with `interval`, `slow_down`, `expired_token`, and `access_denied`.
