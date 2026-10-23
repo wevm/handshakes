@@ -35,10 +35,12 @@ export async function create(): Promise<create.ReturnType> {
   server.on('request', toNodeHandler(auth))
 
   return {
+    // Clients keep connections alive, so `close` ends them instead of waiting for them to idle.
     close: () =>
-      new Promise<void>((resolve, reject) =>
-        server.close((error) => (error ? reject(error) : resolve())),
-      ),
+      new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()))
+        server.closeAllConnections()
+      }),
     url,
   }
 }

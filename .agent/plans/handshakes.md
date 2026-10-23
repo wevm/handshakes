@@ -1,6 +1,6 @@
 # Handshakes implementation plan
 
-Status: phase 0 done. Phase 1 is next.
+Status: phases 0 and 1 done, except the manual Vercel AI Gateway check of phase 1. Phase 2 is next.
 
 Handshakes is an OAuth client library and CLI that replaces stored API keys with short-lived access tokens.
 
@@ -147,7 +147,7 @@ One package, `handshakes`, with five entries and a bin.
 - The core entry has no dependencies. It runs in Node, Bun, Deno, and edge runtimes.
 - `handshakes/node` uses `fs` and child processes.
 - `handshakes/server` has no dependencies. It verifies RS256 and ES256 signatures with WebCrypto, so it runs on edge runtimes too.
-- `@vercel/oidc`, `better-auth`, and `@better-auth/oauth-provider` are optional peers.
+- `better-auth` and `@better-auth/oauth-provider` are optional peers.
 
 ## TypeScript API
 
@@ -266,24 +266,26 @@ type Source = {
   /** Name in `Token.source`, `status`, and errors, such as `githubActions`. */
   name: string
   /** Returns a JWT for `audience`. */
-  token: (options: Source.token.Options) => Promise<string>
+  /** Returns a JWT for `context.audience`. `context` holds `audience`, `env`, and `fetch`. */
+  token: (context: Source.Context) => Promise<string>
 }
 ```
 
-| Source                   | Detects                       | Request                                                                          | Audience                                 |
-| ------------------------ | ----------------------------- | -------------------------------------------------------------------------------- | ---------------------------------------- |
-| `Source.vercel()`        | `VERCEL`, `VERCEL_OIDC_TOKEN` | Request header, token file, or env. Another audience goes through `@vercel/oidc` | Any                                      |
-| `Source.githubActions()` | `GITHUB_ACTIONS`              | `GET` `ACTIONS_ID_TOKEN_REQUEST_URL` with `audience`, and the request token      | Any                                      |
-| `Source.gitlab()`        | `GITLAB_CI`                   | Reads `<AUD>_ID_TOKEN`, or the `variable` option                                 | Fixed in `id_tokens` of `.gitlab-ci.yml` |
-| `Source.circleci()`      | `CIRCLECI`                    | Reads `CIRCLE_OIDC_TOKEN_V2`                                                     | Fixed                                    |
-| `Source.gcp()`           | `K_SERVICE`                   | Metadata server, `…/service-accounts/default/identity?audience=`                 | Any                                      |
-| `NodeSource.buildkite()` | `BUILDKITE`                   | `buildkite-agent oidc request-token --audience`                                  | Any                                      |
-| `NodeSource.file()`      | The file exists               | Reads a projected token, such as a Kubernetes service account token              | Fixed in the pod spec                    |
+| Source                   | Detects                       | Request                                                                                                                                | Audience                                 |
+| ------------------------ | ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------- |
+| `Source.vercel()`        | `VERCEL`, `VERCEL_OIDC_TOKEN` | Request header of Vercel Functions, else env. Another audience is exchanged at `https://oidc.vercel.com/~token` (`exchangeUrl` option) | Any                                      |
+| `Source.githubActions()` | `GITHUB_ACTIONS`              | `GET` `ACTIONS_ID_TOKEN_REQUEST_URL` with `audience`, and the request token                                                            | Any                                      |
+| `Source.gitlab()`        | `GITLAB_CI`                   | Reads `<AUD>_ID_TOKEN`, or the `variable` option                                                                                       | Fixed in `id_tokens` of `.gitlab-ci.yml` |
+| `Source.circleci()`      | `CIRCLECI`                    | Reads `CIRCLE_OIDC_TOKEN_V2`                                                                                                           | Fixed                                    |
+| `Source.gcp()`           | `K_SERVICE`                   | Metadata server, `…/service-accounts/default/identity?audience=`                                                                       | Any                                      |
+| `NodeSource.buildkite()` | `BUILDKITE`                   | `buildkite-agent oidc request-token --audience`                                                                                        | Any                                      |
+| `NodeSource.file()`      | The file exists               | Reads a projected token, such as a Kubernetes service account token                                                                    | Fixed in the pod spec                    |
 
 - `Source.defaults` is `[vercel, githubActions, gitlab, circleci, gcp]`, in priority order. `NodeSource.defaults` adds `buildkite`.
 - `Source.from(source)` types a custom source.
 - For a source with a fixed audience, the client decodes the token and compares `aud` with the requested audience. A mismatch throws `Identity.AudienceError`, and the token is not sent.
-- `Source.vercel` returns the token without an exchange when its `aud` already matches, such as `https://vercel.com/<team>` for AI Gateway.
+- `Source.vercel` returns the token without an exchange when its `aud` already matches, such as `https://vercel.com/<team>` for AI Gateway. It implements the request header and the audience exchange itself, with no `@vercel/oidc` peer, so `env` and `fetch` stay injectable. The token file (`VERCEL_OIDC_TOKEN_FILE`) is left for `handshakes/node`.
+- `Source.Env` is the type of `env`. `Identity.token` reads `process.env` only when the runtime has one.
 - Compute Engine and GKE set no variable to detect. List `Source.gcp()` explicitly there.
 
 ### `Store`
@@ -445,7 +447,7 @@ type Token = {
 
 ### `handshakes/test`
 
-A local OIDC issuer for integration tests. It also serves GitHub's token request endpoint, so `Source.githubActions` runs unchanged against it.
+A local OIDC issuer for integration tests. It signs RS256 tokens with the claims of a platform, and serves the endpoints that the sources call: GitHub's token request endpoint, the Google Cloud metadata server, and Vercel's audience exchange. Sources run unchanged against it.
 
 ```ts
 import { Identity } from 'handshakes'
@@ -458,7 +460,7 @@ const jwt = await issuer.sign({
   expiresIn: 300,
   preset: 'githubActions',
 })
-const env = issuer.env({ preset: 'githubActions' })
+const env = await issuer.env({ preset: 'githubActions' })
 const token = await Identity.token({ audience: 'https://id.example.com', env })
 await issuer.close()
 ```
@@ -931,6 +933,6 @@ Done when `handshakes fetch` works without a profile against an API that uses `R
 - `extendOAuthProvider` is new in `@better-auth/oauth-provider`. Pin the version, and run the plugin tests on every upgrade.
 - `handshakes/better-auth` can stay here or move to Better Auth after 1.0.
 - File locks behave differently on Windows. Test the lock method there before phase 2 ends.
-- `Source.vercel` depends on `@vercel/oidc` for other audiences. Own the request later if the peer becomes a problem.
+- `Source.vercel` calls `https://oidc.vercel.com/~token` directly. If Vercel changes that endpoint, follow `@vercel/oidc`, which documents it in code only.
 - `exec` puts the token in the environment of the child, which other processes of the same user can read. This is acceptable for a token that expires in minutes.
 - Google refresh tokens do not rotate, so only the local server exercises the refresh race.

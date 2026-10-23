@@ -23,6 +23,10 @@ jobs:
 
   test:
     name: Test Runtime
+    # `id-token: write` lets the GitHub Actions source request a real token from the runner.
+    permissions:
+      contents: read
+      id-token: write
     runs-on: ubuntu-latest
     steps:
       - name: Clone repository

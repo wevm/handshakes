@@ -112,7 +112,7 @@ Source commit: `0b589ec34481856b4153526f10a0a35558a201a8`. Retrieved 2026-10-23.
 - Wait for at least three concrete uses before introducing a general abstraction unless a hard boundary already exists.
 - Optimize for code that is easy to change, not maximum DRYness.
 - Keep authoritative state, configuration, schemas, and constants in one place. Derive dependent values.
-- Avoid wrappers that only rename another function or mirror an SDK without narrowing capabilities or adding a domain contract. Do not reimplement what `@vercel/oidc` or Better Auth already provides.
+- Avoid wrappers that only rename another function or mirror an SDK without narrowing capabilities or adding a domain contract. Do not reimplement what Better Auth already provides.
 
 ## Code Documentation
 
@@ -211,7 +211,7 @@ Applies to documentation, comments, TSDoc, interface copy, commit messages, and 
 - Use zile for library builds and development linking.
 - Put scripts, devDependencies, and packageManager before `[!start-pkg]` in package.json. Package metadata and runtime dependencies follow it. Alphabetize entries within each group.
 - Use the single scaffold tsconfig.json. Zile derives build inputs from package entrypoints. Add each entry to `paths` in `tsconfig.json` and to the test aliases in `vite.config.ts`.
-- `incur` is the one runtime dependency, for the CLI. Better Auth packages and `@vercel/oidc` are optional peers.
+- `incur` is the one runtime dependency, for the CLI. Better Auth packages are optional peers.
 
 ## Commands
 

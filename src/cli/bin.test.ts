@@ -3,6 +3,7 @@ import * as ChildProcess from 'node:child_process'
 import * as Fs from 'node:fs'
 import * as Path from 'node:path'
 import * as Esbuild from 'esbuild'
+import { Issuer } from 'handshakes/test'
 
 describe('handshakes', () => {
   let bin: string
@@ -27,14 +28,35 @@ describe('handshakes', () => {
     Fs.rmSync(dir, { force: true, recursive: true })
   })
 
-  test('--help', () => {
-    const result = ChildProcess.spawnSync(process.execPath, [bin, '--help'], { encoding: 'utf8' })
+  /**
+   * Runs the CLI with `env` in place of the environment of the test process. The child runs
+   * asynchronously, so servers in the test process keep answering its requests.
+   */
+  function run(args: readonly string[], env: Readonly<Record<string, string>> = {}) {
+    return new Promise<{ status: number | null; stderr: string; stdout: string }>((resolve) => {
+      const child = ChildProcess.spawn(process.execPath, [bin, ...args], {
+        env: { PATH: process.env['PATH'] ?? '', ...env },
+      })
+      let stderr = ''
+      let stdout = ''
+      child.stderr.on('data', (chunk: Buffer) => (stderr += chunk))
+      child.stdout.on('data', (chunk: Buffer) => (stdout += chunk))
+      child.on('close', (status) => resolve({ status, stderr, stdout }))
+    })
+  }
+
+  test('--help', async () => {
+    const result = await run(['--help'])
 
     expect(result.status).toMatchInlineSnapshot(`0`)
     expect(result.stdout).toMatchInlineSnapshot(`
       "handshakes — Resolves short-lived OAuth access tokens from the platform identity or a stored grant, in place of stored API keys.
 
       Usage: handshakes <command>
+
+      Commands:
+        status  Names the source that detects its platform here, and the sources that were checked.
+        token   Prints the OIDC token that the platform signs for this code, with the requested audience.
 
       Integrations:
         completions  Generate shell completion script
@@ -54,6 +76,55 @@ describe('handshakes', () => {
         --token-offset <n>                  Skip first n tokens of output
         --update                            Update to latest version
         --version                           Show version
+      "
+    `)
+  })
+
+  describe('with the local issuer', () => {
+    let issuer: Issuer.Issuer
+
+    beforeAll(async () => {
+      issuer = await Issuer.create()
+    })
+
+    afterAll(async () => {
+      await issuer.close()
+    })
+
+    test('token --audience prints the subject token', async () => {
+      const result = await run(
+        ['token', '--audience', 'https://api.example.com'],
+        await issuer.env({ preset: 'githubActions' }),
+      )
+
+      expect(result.status).toMatchInlineSnapshot(`0`)
+      expect(result.stdout).toMatch(/^[\w-]+\.[\w-]+\.[\w-]+\n$/)
+    })
+
+    test('status --json names the detected source', async () => {
+      const result = await run(['status', '--json'], await issuer.env({ preset: 'githubActions' }))
+
+      expect(JSON.parse(result.stdout)).toMatchInlineSnapshot(`
+        {
+          "checked": [
+            "vercel",
+            "githubActions",
+            "gitlab",
+            "gcp",
+          ],
+          "source": "githubActions",
+        }
+      `)
+    })
+  })
+
+  test('token --audience exits with 3 when no source detects its platform', async () => {
+    const result = await run(['token', '--audience', 'https://api.example.com'])
+
+    expect(result.status).toMatchInlineSnapshot(`3`)
+    expect(result.stdout + result.stderr).toMatchInlineSnapshot(`
+      "code: SOURCE_NOT_FOUND
+      message: "No source detected its platform for audience https://api.example.com. Checked: vercel, githubActions, gitlab, gcp."
       "
     `)
   })
