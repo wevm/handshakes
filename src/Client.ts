@@ -1,21 +1,24 @@
 /**
- * @module A client for one API. It resolves an access token in a fixed order: a cached token, a
- * stored grant (refreshed under the store lock), then an interactive device grant (RFC 8628).
+ * @module A client for one API. It resolves an access token in a fixed order: a cached token, an
+ * exchange of a detected subject token (RFC 8693), a stored grant (refreshed under the store lock),
+ * then an interactive device grant (RFC 8628).
  */
 import * as DeviceGrant from './DeviceGrant.js'
+import * as Exchange from './Exchange.js'
 import * as Grant from './Grant.js'
+import * as Identity from './Identity.js'
 import * as Jwt from './internal/Jwt.js'
 import * as OAuth from './internal/OAuth.js'
 import * as Metadata from './Metadata.js'
-import type * as Source from './Source.js'
+import * as Source from './Source.js'
 import * as Store from './Store.js'
 
 /** An access token and how the client got it. */
 export type AccessToken = {
   /** When the token expires, in milliseconds since the epoch. */
   expiresAt: number
-  /** `grant`: from a stored or new grant. */
-  method: 'grant'
+  /** `exchange`: from a subject token. `grant`: from a stored or new grant. */
+  method: 'exchange' | 'grant'
   /** Space-separated scopes, when the server returns them. */
   scope?: string | undefined
   /** The authorization scheme of the token. */
@@ -24,7 +27,7 @@ export type AccessToken = {
   value: string
 }
 
-/** Thrown when no method applies: no stored grant, and the client is not interactive. */
+/** Thrown when no method applies: no source detects, no grant is stored, and the client is not interactive. */
 export class AuthorizationRequiredError extends Error {
   override name = 'Client.AuthorizationRequiredError'
 
@@ -64,6 +67,7 @@ export function create(options: create.Options): Client {
   const issuer = options.issuer ?? options.endpoints?.token ?? ''
   const store = options.store ?? Store.memory()
   const key = `${issuer} ${options.clientId ?? ''}`
+  const sources = options.sources ?? Source.defaults
 
   let cached: (AccessToken & { issuedAt: number }) | undefined
   let metadata: Promise<Metadata.Endpoints> | undefined
@@ -167,6 +171,36 @@ export function create(options: create.Options): Client {
     return result
   }
 
+  /** Exchanges the subject token of `source` for an access token, and caches it. */
+  async function exchange(source: Source.Source): Promise<AccessToken> {
+    const audience = perSource(options.subjectAudience, source) ?? options.issuer
+    if (!audience) throw new TypeError('Set `subjectAudience` or `issuer`.')
+
+    const subject = await Identity.token({ audience, env, fetch, sources: [source] })
+    const issued = await Exchange.request({
+      clientId: options.clientId,
+      clientSecret: options.clientSecret,
+      endpoint: (await endpoints()).token,
+      fetch,
+      parameters: perSource(options.parameters, source),
+      resource: options.resource,
+      scope: options.scope,
+      subjectExpiresAt: subject.expiresAt,
+      subjectToken: subject.value,
+    })
+
+    cached = {
+      expiresAt: issued.expiresAt,
+      issuedAt: issued.issuedAt,
+      method: 'exchange',
+      type: 'Bearer',
+      value: issued.accessToken,
+      ...(issued.scope ? { scope: issued.scope } : {}),
+    }
+    const { issuedAt: _, ...token } = cached
+    return token
+  }
+
   async function token(): Promise<AccessToken> {
     if (cached && !Grant.expiring(cached, { now: Date.now() })) {
       const { issuedAt: _, ...current } = cached
@@ -175,6 +209,10 @@ export function create(options: create.Options): Client {
     if (pending) return pending
 
     pending = (async () => {
+      // A detected source that fails throws, and the client tries no other method.
+      const source = sources.find((entry) => entry.detect(env))
+      if (source) return exchange(source)
+
       const grant = await stored()
       if (grant) return use(grant)
 
@@ -239,9 +277,18 @@ export function create(options: create.Options): Client {
       if (!result.ok && result.status >= 500) throw new RejectedError(result)
     },
     async status() {
+      const source = sources.find((entry) => entry.detect(env))
+      if (source)
+        return {
+          method: 'exchange',
+          source: source.name,
+          ...(cached?.method === 'exchange' ? { expiresAt: cached.expiresAt } : {}),
+        }
+
       const grant = await store.get(key)
       const interactive = options.interactive ?? false
-      if (!grant) return { checked: [], interactive, method: 'none' }
+      if (!grant)
+        return { checked: sources.map((entry) => entry.name), interactive, method: 'none' }
 
       const subject = Jwt.decode(grant.accessToken)?.payload['sub']
       return {
@@ -273,14 +320,23 @@ export declare namespace create {
     issuer?: string | undefined
     /** Receives the user code during `authorize`. Default: prints it to stderr. */
     onDeviceCode?: ((code: DeviceGrant.Code) => void) | undefined
+    /** Extra fields of the token exchange, such as OpenRouter's `federation_policy_id`. */
+    parameters?: PerSource<Readonly<Record<string, string>>> | undefined
     /** RFC 8707 resource of the access token. */
     resource?: string | undefined
     /** Space-separated scopes. */
     scope?: string | undefined
+    /** Sources of subject tokens, in priority order. Default: `Source.defaults`. */
+    sources?: readonly Source.Source[] | undefined
     /** Where grants persist. Default: `Store.memory()`. */
     store?: Store.Store | undefined
+    /** `aud` of the subject token. Default: `issuer`. */
+    subjectAudience?: PerSource<string> | undefined
   }
 }
+
+/** A value, or a function of the detected source, such as the per-provider `audience` of Google STS. */
+export type PerSource<value> = value | ((source: Source.Source) => value)
 
 /** Thrown when the token or revocation endpoint rejects a request with an RFC 6749 §5.2 error. */
 export class RejectedError extends Error {
@@ -308,6 +364,13 @@ export class RejectedError extends Error {
 /** The method that applies for a client. */
 export type Status =
   | {
+      /** When the cached access token expires, when one is cached. */
+      expiresAt?: number | undefined
+      method: 'exchange'
+      /** Name of the detected source. */
+      source: string
+    }
+  | {
       /** When the access token expires, in milliseconds since the epoch. */
       expiresAt: number
       method: 'grant'
@@ -323,6 +386,16 @@ export type Status =
       interactive: boolean
       method: 'none'
     }
+
+/** Returns the value of a `PerSource` option for `source`. */
+function perSource<value>(
+  option: PerSource<value> | undefined,
+  source: Source.Source,
+): value | undefined {
+  return typeof option === 'function'
+    ? (option as (source: Source.Source) => value)(source)
+    : option
+}
 
 /** Prints the user code and the verification page to stderr. */
 function printCode(code: DeviceGrant.Code): void {

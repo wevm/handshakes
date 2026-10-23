@@ -1,5 +1,8 @@
 /** @module Resolves access tokens through stored grants and the device grant, against a local Better Auth server. */
 import { Client, Store } from 'handshakes'
+import { Policy, Server as ExchangeServer } from 'handshakes/server'
+import { Issuer } from 'handshakes/test'
+import * as Http from '../test/Http.js'
 import * as Server from '../test/Server.js'
 
 let server: Server.create.ReturnType
@@ -17,6 +20,8 @@ function create(options: Partial<Client.create.Options> = {}) {
   const approvals: Promise<void>[] = []
   const client = Client.create({
     clientId: server.clientId,
+    // No source detects in an empty environment, also in CI.
+    env: {},
     interactive: true,
     issuer: server.url,
     onDeviceCode: (code) => approvals.push(server.approve(code.userCode)),
@@ -180,10 +185,106 @@ describe('status', () => {
 
     expect(await client.status()).toMatchInlineSnapshot(`
       {
-        "checked": [],
+        "checked": [
+          "vercel",
+          "githubActions",
+          "gitlab",
+          "gcp",
+        ],
         "interactive": false,
         "method": "none",
       }
     `)
+  })
+})
+
+describe('with a subject token', () => {
+  let exchanges: number
+  let issuer: Issuer.Issuer
+  let server: Awaited<ReturnType<typeof Http.serve>>
+
+  beforeAll(async () => {
+    exchanges = 0
+    issuer = await Issuer.create()
+    server = await Http.serve(
+      (url) =>
+        ExchangeServer.create({
+          issue: async (context) => {
+            exchanges += 1
+            return { accessToken: `key_${exchanges}`, expiresAt: context.expiresAt }
+          },
+          issuer: url,
+          policies: [
+            Policy.githubActions({
+              audience: url,
+              issuer: issuer.url,
+              repositoryId: '812345',
+              scopes: ['data:read'],
+            }),
+          ],
+        }).fetch,
+    )
+  })
+
+  afterAll(async () => {
+    await Promise.all([issuer.close(), server.close()])
+  })
+
+  test('exchanges the subject token of the detected source', async () => {
+    const client = Client.create({
+      env: await issuer.env({ preset: 'githubActions' }),
+      issuer: server.url,
+    })
+
+    const token = await client.token()
+
+    expect(token.method).toMatchInlineSnapshot(`"exchange"`)
+    expect(token.scope).toMatchInlineSnapshot(`"data:read"`)
+    expect(token.expiresAt <= Date.now() + 900_000).toMatchInlineSnapshot(`true`)
+  })
+
+  test('returns the cached access token until it expires', async () => {
+    const client = Client.create({
+      env: await issuer.env({ preset: 'githubActions' }),
+      issuer: server.url,
+    })
+    const first = await client.token()
+
+    const second = await client.token()
+
+    expect(second.value).toBe(first.value)
+  })
+
+  test('describes the exchange without token values', async () => {
+    const client = Client.create({
+      env: await issuer.env({ preset: 'githubActions' }),
+      issuer: server.url,
+    })
+    await client.token()
+
+    const status = await client.status()
+
+    expect(status).toMatchInlineSnapshot(
+      { expiresAt: expect.any(Number) },
+      `
+      {
+        "expiresAt": Any<Number>,
+        "method": "exchange",
+        "source": "githubActions",
+      }
+    `,
+    )
+  })
+
+  test('throws when the server refuses the subject token', async () => {
+    const client = Client.create({
+      env: await issuer.env({ preset: 'githubActions' }),
+      issuer: server.url,
+      subjectAudience: 'https://other.example.com',
+    })
+
+    await expect(client.token()).rejects.toThrowErrorMatchingInlineSnapshot(
+      `[Exchange.RejectedError: The server rejected the token exchange: invalid_grant (The subject token matches no trust policy.).]`,
+    )
   })
 })

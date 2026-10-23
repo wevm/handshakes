@@ -4,6 +4,7 @@ import { Store } from 'handshakes/node'
 
 const client = Client.create({
   clientId: process.env['HANDSHAKES_CLIENT_ID'],
+  env: {},
   interactive: false,
   issuer: process.env['HANDSHAKES_ISSUER'],
   store: Store.file({ directory: process.env['HANDSHAKES_DIRECTORY'] }),

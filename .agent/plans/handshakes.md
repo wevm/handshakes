@@ -1,6 +1,6 @@
 # Handshakes implementation plan
 
-Status: phases 0 to 2 done, except two manual checks: Vercel AI Gateway (phase 1) and Google OAuth (phase 2). Phase 3 is next.
+Status: phases 0 to 3 done, except manual and external checks: Vercel AI Gateway (phase 1), Google OAuth (phase 2), and Google STS and OpenRouter (phase 3). Phase 4 is next.
 
 Handshakes is an OAuth client library and CLI that replaces stored API keys with short-lived access tokens.
 
@@ -414,7 +414,7 @@ type Grant = {
 }
 
 type Status =
-  | { expiresAt: number; method: 'exchange'; source: string; subject: string }
+  | { expiresAt?: number | undefined; method: 'exchange'; source: string }
   | {
       expiresAt: number
       method: 'grant'
@@ -676,9 +676,11 @@ import { tokenExchange } from 'handshakes/better-auth'
 export const auth = betterAuth({
   plugins: [
     oauthProvider({
+      // Shorter than the shortest subject token, such as 300 seconds on GitHub Actions.
+      m2mAccessTokenExpiresIn: 240,
       /* … */
     }),
-    tokenExchange({ maxLifetime: 900 }),
+    tokenExchange({ policies: [] }),
   ],
 })
 
@@ -694,8 +696,10 @@ await auth.api.createTrustPolicy({
 ```
 
 - The plugin uses the `grants` slot, not `clientAuthentication`. The `clientAuthentication` contract requires a single-use `jti` and a lifetime of `assertionMaxLifetime` (300 seconds by default) or less.
-- It adds a `trustPolicy` table, and the `createTrustPolicy`, `listTrustPolicies`, and `deleteTrustPolicy` endpoints.
-- It records the `iss` and `sub` of the subject token with each issued token, for audit.
+- It adds a `trustPolicy` table, and the server-only `createTrustPolicy`, `listTrustPolicies`, and `deleteTrustPolicy` endpoints. `policies` adds policies in code. Each policy names a `clientId`, whose grant types must include the token exchange.
+- Better Auth issues the access token for `m2mAccessTokenExpiresIn`, and has no lifetime for each issuance. So the plugin refuses a subject token that expires before that lifetime ends.
+- A request that names a `client_id` must name the client of the policy.
+- Not done: a record of the `iss` and `sub` of the subject token with each issued token, for audit.
 
 ## CLI
 
@@ -839,6 +843,8 @@ No mocks, stubs, or stubbed globals. Every test runs against a real server or a 
 
 `test/Server.ts` starts the local Better Auth server on a random port. A test approves a user code through the server's own approval endpoint, as a signed-in test user.
 
+`test/Server.ts` also installs `tokenExchange`, registers a client for the exchange, and stores trust policies through `createTrustPolicy`. `test/Http.ts` serves a fetch handler, such as `Server`, on a random port.
+
 ## Phases
 
 ### Phase 0: scaffold
@@ -944,6 +950,7 @@ Done when `handshakes fetch` works without a profile against an API that uses `R
 
 - `extendOAuthProvider` is new in `@better-auth/oauth-provider`. Pin the version, and run the plugin tests on every upgrade.
 - `handshakes/better-auth` can stay here or move to Better Auth after 1.0.
+- `issueTokens` of `@better-auth/oauth-provider` takes no lifetime. Propose one upstream, so the plugin can cap the access token at the expiry of the subject token instead of refusing.
 - File locks behave differently on Windows. Test the lock method there before phase 2 ends.
 - `Source.vercel` calls `https://oidc.vercel.com/~token` directly. If Vercel changes that endpoint, follow `@vercel/oidc`, which documents it in code only.
 - `exec` puts the token in the environment of the child, which other processes of the same user can read. This is acceptable for a token that expires in minutes.

@@ -53,6 +53,7 @@ describe('file', () => {
     const approvals: Promise<void>[] = []
     const grant = await Client.create({
       clientId: server.clientId,
+      env: {},
       issuer: server.url,
       onDeviceCode: (code) => approvals.push(server.approve(code.userCode)),
       scope: 'openid email offline_access',
@@ -107,6 +108,7 @@ describe('file', () => {
     await store.set(key, { ...refreshed!, expiresAt: Date.now() })
     const again = await Client.create({
       clientId: server.clientId,
+      env: {},
       interactive: false,
       issuer: server.url,
       store,

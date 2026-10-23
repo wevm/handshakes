@@ -6,6 +6,8 @@ import { memoryAdapter } from 'better-auth/adapters/memory'
 import { getSchema } from 'better-auth/db'
 import { toNodeHandler } from 'better-auth/node'
 import { jwt } from 'better-auth/plugins/jwt'
+import { tokenExchange } from 'handshakes/better-auth'
+import type { Policy } from 'handshakes/server'
 
 /**
  * Starts the server, registers a public client for the device grant, and returns the server's URL,
@@ -25,9 +27,16 @@ export async function create(): Promise<create.ReturnType> {
     emailAndPassword: { enabled: true },
     plugins: [
       jwt({ jwt: { issuer: url } }),
-      oauthProvider({ consentPage: '/consent', loginPage: '/login' }),
+      // Access tokens of the exchange must end before subject tokens of the test issuer, which live for 300 seconds.
+      oauthProvider({
+        consentPage: '/consent',
+        loginPage: '/login',
+        m2mAccessTokenExpiresIn: 240,
+        scopes: ['data:read', 'data:write', 'email', 'offline_access', 'openid', 'profile'],
+      }),
       // The shortest interval keeps device grant tests fast. RFC 8628 defaults to 5 seconds.
       oauthDeviceAuthorization({ interval: '1s', verificationUri: '/device' }),
+      tokenExchange(),
     ],
     // A fixed secret is safe for a server that lives only for one test file.
     secret: 'handshakes-test-secret-handshakes-test-secret',
@@ -68,6 +77,18 @@ export async function create(): Promise<create.ReturnType> {
     headers: new Headers({ cookie }),
   })
 
+  // A public client for the token exchange. Its trust policies authorize it, not a secret.
+  const exchangeClient = await auth.api.adminCreateOAuthClient({
+    body: {
+      client_name: 'Handshakes exchange test',
+      grant_types: ['urn:ietf:params:oauth:grant-type:token-exchange'],
+      scope: 'data:read data:write',
+      skip_consent: true,
+      token_endpoint_auth_method: 'none',
+    },
+    headers: new Headers({ cookie }),
+  })
+
   return {
     async approve(userCode) {
       const headers = { cookie, origin: url }
@@ -92,6 +113,10 @@ export async function create(): Promise<create.ReturnType> {
         server.close((error) => (error ? reject(error) : resolve()))
         server.closeAllConnections()
       }),
+    exchangeClientId: exchangeClient.client_id,
+    async trust(policy) {
+      await auth.api.createTrustPolicy({ body: { ...policy, clientId: exchangeClient.client_id } })
+    },
     url,
   }
 }
@@ -104,6 +129,10 @@ export declare namespace create {
     clientId: string
     /** Stops the server. */
     close: () => Promise<void>
+    /** ID of a public client with only the token exchange grant. */
+    exchangeClientId: string
+    /** Stores `policy` in the `trustPolicy` table, for the exchange client. */
+    trust: (policy: Policy.Policy) => Promise<void>
     /** The origin of the server, which is also its issuer. */
     url: string
   }
