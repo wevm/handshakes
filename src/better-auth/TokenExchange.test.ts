@@ -170,4 +170,55 @@ describe('tokenExchange', () => {
       `[APIError: [body] claims must name at least one claim.]`,
     )
   })
+
+  test('rejects a stored policy with a maxLifetime below m2mAccessTokenExpiresIn', async () => {
+    const policy = Policy.githubActions({
+      audience: server.url,
+      issuer: issuer.url,
+      maxLifetime: 120,
+      repositoryId: '812346',
+      scopes: ['data:read'],
+    })
+
+    await expect(server.trust(policy)).rejects.toThrowErrorMatchingInlineSnapshot(
+      `[APIError: The policy githubActions:812346:* sets \`maxLifetime\` to 120 seconds, but Better Auth issues every access token of the exchange for \`m2mAccessTokenExpiresIn\`, 240 seconds. Remove \`maxLifetime\` from the policy, or set \`m2mAccessTokenExpiresIn\` to 120 or less.]`,
+    )
+  })
+
+  test('rejects a policy in code with a maxLifetime below m2mAccessTokenExpiresIn', async () => {
+    const policy = Policy.githubActions({
+      audience: 'https://auth.example.com',
+      clientId: 'ci',
+      issuer: issuer.url,
+      maxLifetime: 120,
+      repositoryId: '812346',
+      scopes: ['data:read'],
+    })
+
+    await expect(Server.create({ policies: [policy] })).rejects.toThrowErrorMatchingInlineSnapshot(
+      `[TypeError: The policy githubActions:812346:* sets \`maxLifetime\` to 120 seconds, but Better Auth issues every access token of the exchange for \`m2mAccessTokenExpiresIn\`, 240 seconds. Remove \`maxLifetime\` from the policy, or set \`m2mAccessTokenExpiresIn\` to 120 or less.]`,
+    )
+  })
+
+  test('issues an access token for a policy with a maxLifetime of m2mAccessTokenExpiresIn', async () => {
+    await server.trust(
+      Policy.githubActions({
+        audience: server.url,
+        issuer: issuer.url,
+        maxLifetime: 240,
+        repositoryId: '812347',
+        scopes: ['data:read'],
+      }),
+    )
+    const subjectToken = await issuer.sign({
+      audience: server.url,
+      claims: { repository_id: '812347' },
+      preset: 'githubActions',
+    })
+
+    const result = await exchange({ subject_token: subjectToken })
+
+    expect(result.status).toMatchInlineSnapshot(`200`)
+    expect(result.body['expires_in']).toMatchInlineSnapshot(`240`)
+  })
 })
