@@ -224,13 +224,27 @@ await issuer.close()
 
 ## CLI
 
-The `handshakes` CLI resolves an access token in the same order as `Client`. Profiles in `handshakes.json` name the authorization server and the client.
+The `handshakes` CLI resolves an access token in the same order as `Client`. A profile names the authorization server and the client. The CLI reads profiles from `handshakes.json` in the nearest ancestor directory, then from `~/.config/handshakes/config.json`.
+
+```json
+{
+  "default": "example",
+  "profiles": {
+    "example": {
+      "clientId": "example-cli",
+      "env": "EXAMPLE_API_KEY",
+      "issuer": "https://auth.example.com",
+      "scope": "data:read"
+    }
+  }
+}
+```
 
 ```sh
 # Runs the device grant and stores the grant.
 handshakes authorize example
 
-# Runs the tests with an access token in the variable that the profile names.
+# Runs the tests with an access token in `EXAMPLE_API_KEY`.
 handshakes exec example -- pnpm test
 ```
 
