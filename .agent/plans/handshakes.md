@@ -954,6 +954,10 @@ Done when `handshakes fetch` works without a profile against an API that uses `R
 - API freeze, and 1.0 through Changesets.
 - A proposal of `handshakes/better-auth` to Better Auth.
 
+## Examples
+
+- `examples/personal-agent/`: a personal coding agent on GitHub, started with `/agent`, with per-person credentials and no stored secret. [Plan](personal-agent.md).
+
 ## Test targets
 
 | Target            | Path                                    | Setup                                                                                                                    |
