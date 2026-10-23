@@ -259,6 +259,18 @@ describe('handshakes', () => {
       `)
     }, 30_000)
 
+    test('fetch refuses a URL outside the origin of the profile', async () => {
+      const result = await run(['fetch', 'https://other.example.com/v1/items'], env)
+
+      expect(result.status).toMatchInlineSnapshot(`2`)
+      expect((result.stdout + result.stderr).replace(server.url, '<issuer>'))
+        .toMatchInlineSnapshot(`
+        "code: OUTSIDE_RESOURCE
+        message: "The URL https://other.example.com/v1/items is outside the origin of the profile, <issuer>. To resolve: Set \`resource\` in the profile to the API that the token is for."
+        "
+      `)
+    })
+
     test('profiles lists the profiles and the default', async () => {
       const result = await run(['profiles', '--json'], env)
 
@@ -434,6 +446,20 @@ describe('handshakes', () => {
       })
       child.kill()
 
+      const fetchTool = (
+        tools['tools'] as { inputSchema: { properties: object }; name: string }[]
+      ).find((tool) => tool.name === 'fetch')
+      // An agent cannot redirect a token with `issuer` or `resource`, or read a file with `@file`.
+      expect(Object.keys(fetchTool?.inputSchema.properties ?? {})).toMatchInlineSnapshot(`
+        [
+          "profile",
+          "url",
+          "data",
+          "fail",
+          "header",
+          "method",
+        ]
+      `)
       expect((tools['tools'] as { name: string }[]).map((tool) => tool.name))
         .toMatchInlineSnapshot(`
         [

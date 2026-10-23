@@ -49,6 +49,7 @@ export function fromResponse(
     issuedAt: options.now,
     issuer: options.issuer,
     ...(refreshToken ? { refreshToken } : {}),
+    ...(options.resource ? { resource: options.resource } : {}),
     ...(scope ? { scope } : {}),
   }
 }
@@ -61,6 +62,34 @@ export declare namespace fromResponse {
     now: number
     /** The refresh token of the grant that a refresh replaces. */
     refreshToken?: string | undefined
+    /** The RFC 8707 resource of the request. */
+    resource?: string | undefined
+  }
+}
+
+/**
+ * Returns the store key of a grant. A grant serves one issuer, client, resource, and token endpoint,
+ * so a client with another resource or endpoint never reads it.
+ */
+export function key(options: key.Options): string {
+  return [
+    options.issuer,
+    options.clientId ?? '',
+    options.resource ?? '',
+    options.tokenEndpoint ?? '',
+  ].join(' ')
+}
+
+export declare namespace key {
+  type Options = {
+    /** The client. */
+    clientId?: string | undefined
+    /** The issuer, or the token endpoint for a server without metadata. */
+    issuer: string
+    /** The RFC 8707 resource. */
+    resource?: string | undefined
+    /** The token endpoint, when the client sets `endpoints`. */
+    tokenEndpoint?: string | undefined
   }
 }
 
@@ -78,6 +107,8 @@ export type Grant = {
   issuer: string
   /** The refresh token. Absent when the server issues none. */
   refreshToken?: string | undefined
+  /** The RFC 8707 resource that the grant is for. Absent for a grant without one. */
+  resource?: string | undefined
   /** Space-separated scopes of the access token. */
   scope?: string | undefined
 }

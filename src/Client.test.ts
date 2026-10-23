@@ -1,5 +1,5 @@
 /** @module Resolves access tokens through stored grants and the device grant, against a local Better Auth server. */
-import { Client, Store } from 'handshakes'
+import { Client, Grant, Store } from 'handshakes'
 import { Policy, Resource, Server as ExchangeServer } from 'handshakes/server'
 import { Issuer } from 'handshakes/test'
 import * as Http from '../test/Http.js'
@@ -50,9 +50,9 @@ describe('authorize', () => {
     expect(grant.scope).toMatchInlineSnapshot(`"openid email offline_access"`)
     expect(grant.refreshToken).toEqual(expect.any(String))
     expect(await userinfo(grant.accessToken)).toMatchInlineSnapshot(`200`)
-    expect((await store.get(`${server.url} ${server.clientId}`))?.accessToken).toBe(
-      grant.accessToken,
-    )
+    expect(
+      (await store.get(Grant.key({ clientId: server.clientId, issuer: server.url })))?.accessToken,
+    ).toBe(grant.accessToken)
   })
 })
 
@@ -80,7 +80,7 @@ describe('token', () => {
 
   test('refreshes an expiring grant, and the server rejects the old refresh token', async () => {
     const store = Store.memory()
-    const key = `${server.url} ${server.clientId}`
+    const key = Grant.key({ clientId: server.clientId, issuer: server.url })
     const grant = await create({ store }).client.authorize()
     await store.set(key, { ...grant, expiresAt: Date.now() })
     const { client } = create({ interactive: false, store })
@@ -123,7 +123,7 @@ describe('token', () => {
 
   test('deletes a grant whose refresh token the server rejects', async () => {
     const store = Store.memory()
-    const key = `${server.url} ${server.clientId}`
+    const key = Grant.key({ clientId: server.clientId, issuer: server.url })
     const grant = await create({ store }).client.authorize()
     await store.set(key, { ...grant, expiresAt: Date.now(), refreshToken: 'unknown' })
     const { client } = create({ interactive: false, store })
@@ -153,12 +153,36 @@ describe('fetch', () => {
       `"test@example.com"`,
     )
   })
+  test('throws before it sends a token outside the resource', async () => {
+    const { client } = create({ resource: `${server.url}/oauth2`, store: Store.memory() })
+
+    const error = await client.fetch('https://other.example.com/oauth2/userinfo').then(
+      () => undefined,
+      (error: Client.ResourceError) => error,
+    )
+
+    expect(error?.name).toMatchInlineSnapshot(`"Client.ResourceError"`)
+    expect(error?.steps).toMatchInlineSnapshot(`
+      [
+        "Send the request to a URL at or below the resource, which the access token is for.",
+        "For another API, create a client with that API as its \`resource\`.",
+      ]
+    `)
+  })
+
+  test('reads no stored grant of another resource', async () => {
+    const store = Store.memory()
+    await create({ store }).client.authorize()
+    const { client } = create({ interactive: false, resource: 'https://other.example.com', store })
+
+    await expect(client.token()).rejects.toThrow(Client.AuthorizationRequiredError)
+  })
 })
 
 describe('revoke', () => {
   test('revokes the refresh token and deletes the grant', async () => {
     const store = Store.memory()
-    const key = `${server.url} ${server.clientId}`
+    const key = Grant.key({ clientId: server.clientId, issuer: server.url })
     const { client } = create({ store })
     const grant = await client.authorize()
 

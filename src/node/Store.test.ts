@@ -4,7 +4,7 @@ import * as Fs from 'node:fs'
 import * as Os from 'node:os'
 import * as Path from 'node:path'
 import * as Esbuild from 'esbuild'
-import { Client } from 'handshakes'
+import { Client, Grant } from 'handshakes'
 import { Store } from 'handshakes/node'
 import * as Server from '../../test/Server.js'
 
@@ -49,7 +49,7 @@ describe('file', () => {
   test('refreshes an expiring grant once when several processes request a token', async () => {
     const grants = Path.join(directory, 'race')
     const store = Store.file({ directory: grants })
-    const key = `${server.url} ${server.clientId}`
+    const key = Grant.key({ clientId: server.clientId, issuer: server.url })
     const approvals: Promise<void>[] = []
     const grant = await Client.create({
       clientId: server.clientId,

@@ -156,6 +156,7 @@ export async function start(options: start.Options): Promise<DeviceGrant> {
             clientId: options.clientId,
             issuer: endpoints.issuer,
             now,
+            resource: options.resource,
           })
         if (poll.error === 'authorization_pending') continue
         if (poll.error === 'slow_down') {

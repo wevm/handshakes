@@ -50,7 +50,10 @@ export class AuthorizationRequiredError extends Errors.BaseError {
 export type Client = {
   /** Runs the device grant (RFC 8628) and stores the grant. */
   authorize: (options?: DeviceGrant.wait.Options) => Promise<Grant.Grant>
-  /** `fetch` with `Authorization: Bearer`. After a 401, retries once with a new token. */
+  /**
+   * `fetch` with `Authorization: Bearer`. After a 401, retries once with a new token. Returns a
+   * redirect response unfollowed. Throws `Client.ResourceError` for a URL outside `resource`.
+   */
   fetch: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>
   /** Removes the cached access token. */
   invalidate: () => void
@@ -70,7 +73,12 @@ export function create(options: create.Options): Client {
   const fetch = options.fetch ?? globalThis.fetch
   const issuer = options.issuer ?? options.endpoints?.token ?? ''
   const store = options.store ?? Store.memory()
-  const key = `${issuer} ${options.clientId ?? ''}`
+  const key = Grant.key({
+    clientId: options.clientId,
+    issuer,
+    resource: options.resource,
+    tokenEndpoint: options.endpoints?.token,
+  })
   const sources = options.sources ?? Source.defaults
 
   let cached: (AccessToken & { issuedAt: number }) | undefined
@@ -108,7 +116,8 @@ export function create(options: create.Options): Client {
    */
   async function stored(): Promise<Grant.Grant | undefined> {
     const grant = await store.get(key)
-    if (!grant) return undefined
+    // A custom store can return a grant of another resource. It is never sent.
+    if (!grant || grant.resource !== options.resource) return undefined
     if (!Grant.expiring(grant, { now: Date.now() })) return grant
     if (!grant.refreshToken) return undefined
 
@@ -142,6 +151,7 @@ export function create(options: create.Options): Client {
         issuer,
         now,
         refreshToken: current.refreshToken,
+        resource: options.resource,
       })
       await store.set(key, next)
       return next
@@ -244,11 +254,15 @@ export function create(options: create.Options): Client {
       const request = new Request(input, init)
       const retry = request.clone()
 
+      if (options.resource !== undefined && !within(request.url, options.resource))
+        throw new ResourceError({ resource: options.resource, url: request.url })
+
       const send = async (target: Request) => {
         const access = await token()
         const headers = new Headers(target.headers)
         headers.set('authorization', `${access.type} ${access.value}`)
-        return fetch(new Request(target, { headers }))
+        // A redirect could carry the token to another resource, so the caller receives it instead.
+        return fetch(new Request(target, { headers, redirect: 'manual' }))
       }
 
       const response = await send(request)
@@ -439,6 +453,27 @@ export class RejectedError extends Errors.BaseError {
     this.error = options.error
     this.errorDescription = options.errorDescription
     this.status = options.status
+  }
+}
+
+/** Thrown when `fetch` receives a URL outside the `resource` of the client. */
+export class ResourceError extends Errors.BaseError {
+  override name = 'Client.ResourceError'
+
+  /** The resource of the client. */
+  readonly resource: string
+  /** The URL of the request. */
+  readonly url: string
+
+  constructor(options: { resource: string; url: string }) {
+    super(`The URL ${options.url} is outside the resource ${options.resource}.`, {
+      steps: [
+        'Send the request to a URL at or below the resource, which the access token is for.',
+        'For another API, create a client with that API as its `resource`.',
+      ],
+    })
+    this.resource = options.resource
+    this.url = options.url
   }
 }
 

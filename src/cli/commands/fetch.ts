@@ -12,104 +12,134 @@ import * as Store from '../../node/Store.js'
 import * as Context from '../Context.js'
 import * as Profile from '../Profile.js'
 
-export default Cli.command({
-  alias: { data: 'd', header: 'H', include: 'i', method: 'X' },
-  args: z.object({
-    profile: z
-      .string()
-      .optional()
-      .describe('Name of the profile, or the URL when no profile applies'),
-    url: z.string().optional().describe('URL of the request'),
-  }),
-  description:
-    'Sends a request with an access token, and prints the response body. Without a profile, discovers the authorization server from the API.',
-  options: z.object({
-    ...Context.options.shape,
-    data: z.string().optional().describe('Request body, or @file to read it from a file'),
-    fail: z.boolean().optional().describe('Exits 22 on HTTP 400 or more, as curl does'),
-    header: z.array(z.string()).optional().describe('Request header, as `Name: value`. Repeatable'),
-    include: z.boolean().optional().describe('Prints the status and the headers before the body'),
-    method: z.string().optional().describe('Default: GET, or POST with --data'),
-  }),
-  async run(c) {
-    // `fetch <url>` and `fetch <profile> <url>` share the positions.
-    const name = c.args.url === undefined ? undefined : c.args.profile
-    const url = c.args.url ?? c.args.profile
-    if (!url)
-      return c.error({
-        code: 'NO_URL',
-        exitCode: 2,
-        message:
-          'No URL is set. To resolve: Pass the URL, such as `handshakes fetch https://api.example.com/v1/items`.',
-      })
+/** Options of a request. An agent, through MCP, receives only these. */
+const request = z.object({
+  data: z.string().optional().describe('Request body'),
+  fail: z.boolean().optional().describe('Exits 22 on HTTP 400 or more, as curl does'),
+  header: z.array(z.string()).optional().describe('Request header, as `Name: value`. Repeatable'),
+  method: z.string().optional().describe('Default: GET, or POST with --data'),
+})
 
-    const headers = new Headers()
-    for (const header of c.options.header ?? []) {
-      const index = header.indexOf(':')
-      if (index < 1)
+/** Options of the command in a shell. */
+const shell = z.object({
+  ...Context.options.shape,
+  ...request.shape,
+  data: z.string().optional().describe('Request body, or @file to read it from a file'),
+  include: z.boolean().optional().describe('Prints the status and the headers before the body'),
+})
+
+/**
+ * Returns the `fetch` command. For an agent (`--mcp`), it accepts no `issuer`, `resource`,
+ * `clientId`, or `scope`, and reads no file through `--data @file`, so a prompt cannot redirect a
+ * token or read a local file.
+ */
+export function create(options: { agent: boolean }) {
+  return Cli.command({
+    alias: { data: 'd', header: 'H', include: 'i', method: 'X' },
+    args: z.object({
+      profile: z
+        .string()
+        .optional()
+        .describe('Name of the profile, or the URL when no profile applies'),
+      url: z.string().optional().describe('URL of the request'),
+    }),
+    description:
+      'Sends a request with an access token, and prints the response body. Without a profile, discovers the authorization server from the API.',
+    // The agent schema holds a subset of the optional fields. Parsing strips other keys, so they read as absent.
+    options: (options.agent ? request : shell) as typeof shell,
+    async run(c) {
+      // `fetch <url>` and `fetch <profile> <url>` share the positions.
+      const name = c.args.url === undefined ? undefined : c.args.profile
+      const url = c.args.url ?? c.args.profile
+      if (!url)
         return c.error({
-          code: 'INVALID_HEADER',
+          code: 'NO_URL',
           exitCode: 2,
-          message: `Invalid header: ${header}. To resolve: Write each header as \`Name: value\`.`,
+          message:
+            'No URL is set. To resolve: Pass the URL, such as `handshakes fetch https://api.example.com/v1/items`.',
         })
-      headers.append(header.slice(0, index).trim(), header.slice(index + 1).trim())
-    }
 
-    const body = (() => {
-      const data = c.options.data
-      if (data === undefined) return undefined
-      return data.startsWith('@') ? Fs.readFileSync(data.slice(1)) : data
-    })()
+      const headers = new Headers()
+      for (const header of c.options.header ?? []) {
+        const index = header.indexOf(':')
+        if (index < 1)
+          return c.error({
+            code: 'INVALID_HEADER',
+            exitCode: 2,
+            message: `Invalid header: ${header}. To resolve: Write each header as \`Name: value\`.`,
+          })
+        headers.append(header.slice(0, index).trim(), header.slice(index + 1).trim())
+      }
 
-    try {
-      const client = Profile.resolve({ name, overrides: c.options })
-        ? Context.client({ args: { profile: name }, options: c.options }).client
-        : await Client.discover({
-            clientId: c.options.clientId,
-            scope: c.options.scope,
-            sources: Source.defaults,
-            store: Store.file(),
-            url,
+      const body = (() => {
+        const data = c.options.data
+        if (data === undefined) return undefined
+        return !options.agent && data.startsWith('@') ? Fs.readFileSync(data.slice(1)) : data
+      })()
+
+      try {
+        const profile = Profile.resolve({ name, overrides: c.options })
+        const client = profile
+          ? Context.client({ args: { profile: name }, options: c.options }).client
+          : await Client.discover({
+              clientId: c.options.clientId,
+              scope: c.options.scope,
+              sources: Source.defaults,
+              store: Store.file(),
+              url,
+            })
+
+        // `Client.fetch` keeps a token within its `resource`. Without one, the token stays on the origin of the server.
+        const server = profile?.resource
+          ? undefined
+          : (profile?.issuer ?? profile?.endpoints?.token)
+        if (server && new URL(server).origin !== new URL(url).origin)
+          return c.error({
+            code: 'OUTSIDE_RESOURCE',
+            exitCode: 2,
+            message: `The URL ${url} is outside the origin of the profile, ${new URL(server).origin}. To resolve: Set \`resource\` in the profile to the API that the token is for.`,
           })
 
-      const response = await client.fetch(url, {
-        ...(body === undefined ? {} : { body }),
-        headers,
-        method: c.options.method ?? (body === undefined ? 'GET' : 'POST'),
-      })
-      const text = await response.text()
-      const failed = c.options.fail === true && response.status >= 400
+        const response = await client.fetch(url, {
+          ...(body === undefined ? {} : { body }),
+          headers,
+          method: c.options.method ?? (body === undefined ? 'GET' : 'POST'),
+        })
+        const text = await response.text()
+        const failed = c.options.fail === true && response.status >= 400
 
-      if (!c.formatExplicit) {
-        if (c.options.include) {
-          process.stdout.write(`HTTP ${response.status} ${response.statusText}\n`)
-          for (const [key, value] of response.headers) process.stdout.write(`${key}: ${value}\n`)
-          process.stdout.write('\n')
+        if (!c.formatExplicit) {
+          if (c.options.include) {
+            process.stdout.write(`HTTP ${response.status} ${response.statusText}\n`)
+            for (const [key, value] of response.headers) process.stdout.write(`${key}: ${value}\n`)
+            process.stdout.write('\n')
+          }
+          process.stdout.write(text)
+          if (failed) process.exitCode = 22
+          return
         }
-        process.stdout.write(text)
-        if (failed) process.exitCode = 22
-        return
-      }
 
-      if (failed)
-        return c.error({
-          code: 'HTTP_ERROR',
-          exitCode: 22,
-          message: `The request returned HTTP ${response.status}. To resolve: Read \`body\` for the error of the API.`,
-        })
-      return {
-        body: text,
-        headers: Object.fromEntries(response.headers),
-        status: response.status,
+        if (failed)
+          return c.error({
+            code: 'HTTP_ERROR',
+            exitCode: 22,
+            message: `The request returned HTTP ${response.status}. To resolve: Read \`body\` for the error of the API.`,
+          })
+        return {
+          body: text,
+          headers: Object.fromEntries(response.headers),
+          status: response.status,
+        }
+      } catch (error) {
+        if (error instanceof Client.ResourceError)
+          return c.error({ code: 'OUTSIDE_RESOURCE', exitCode: 2, message: Errors.inline(error) })
+        if (
+          error instanceof Client.DiscoveryError ||
+          error instanceof Metadata.ResourceNotFoundError
+        )
+          return c.error({ code: 'NO_PROFILE', exitCode: 2, message: Errors.inline(error) })
+        return c.error(Context.error(error))
       }
-    } catch (error) {
-      if (error instanceof Client.DiscoveryError || error instanceof Metadata.ResourceNotFoundError)
-        return c.error({
-          code: 'NO_PROFILE',
-          exitCode: 2,
-          message: Errors.inline(error),
-        })
-      return c.error(Context.error(error))
-    }
-  },
-})
+    },
+  })
+}

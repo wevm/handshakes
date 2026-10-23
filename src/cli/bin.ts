@@ -3,7 +3,7 @@
 import { Cli } from 'incur'
 import authorize from './commands/authorize.js'
 import * as Exec from './commands/exec.js'
-import fetch from './commands/fetch.js'
+import * as Fetch from './commands/fetch.js'
 import profiles from './commands/profiles.js'
 import revoke from './commands/revoke.js'
 import status from './commands/status.js'
@@ -23,7 +23,7 @@ const cli = Cli.create('handshakes', {
 })
   .command('authorize', authorize)
   .command('exec', Exec.create({ command: separator === -1 ? [] : argv.slice(separator + 1) }))
-  .command('fetch', fetch)
+  .command('fetch', Fetch.create({ agent: argv.includes('--mcp') }))
   .command('login', authorize)
   .command('logout', revoke)
   .command('profiles', profiles)
