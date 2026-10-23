@@ -22,6 +22,7 @@ describe('create', () => {
         audience: server.url,
         issuer: issuer.url,
         repositoryId: '812345',
+        resources: [api],
         scopes: ['data:read'],
       }),
     )

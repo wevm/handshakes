@@ -54,6 +54,12 @@ export function tokenExchange(options: tokenExchange.Options = {}) {
         error_description: `requested_token_type must be ${accessTokenType}.`,
       })
 
+    const resources = (() => {
+      const resource = body['resource']
+      if (typeof resource === 'string') return [resource]
+      return Array.isArray(resource) ? resource.map(String) : []
+    })()
+
     const subjectToken = field('subject_token')
     const issuer = (() => {
       if (!subjectToken) return undefined
@@ -69,6 +75,7 @@ export function tokenExchange(options: tokenExchange.Options = {}) {
       jwks,
       maxLifetime: lifetime,
       policies: issuer ? await policies(input.ctx, issuer) : [],
+      resources,
       scope: field('scope'),
       subjectToken,
       subjectTokenType: field('subject_token_type'),
@@ -99,11 +106,9 @@ export function tokenExchange(options: tokenExchange.Options = {}) {
           'The subject token expires before the access token that the server issues. Request a subject token with a longer lifetime.',
       })
 
-    const resource = body['resource']
     const issued = await input.provider.issueTokens({
       client,
-      ...(typeof resource === 'string' ? { resources: [resource] } : {}),
-      ...(Array.isArray(resource) ? { resources: resource.map(String) } : {}),
+      ...(result.resources.length > 0 ? { resources: [...result.resources] } : {}),
       scopes: [...result.scopes],
       tokenResponse: { issued_token_type: accessTokenType },
     })
@@ -167,6 +172,7 @@ export function tokenExchange(options: tokenExchange.Options = {}) {
           clientId: { required: true, type: 'string' },
           issuer: { index: true, required: true, type: 'string' },
           maxLifetime: { required: false, type: 'number' },
+          resources: { required: false, type: 'string[]' },
           scopes: { required: true, type: 'string[]' },
         },
       },
@@ -191,6 +197,7 @@ type Row = {
   id: string
   issuer: string
   maxLifetime?: number | null | undefined
+  resources?: string[] | null | undefined
   scopes: string[]
 }
 
@@ -202,6 +209,7 @@ function fromRow(row: Row): Policy.Policy {
     id: row.id,
     issuer: row.issuer,
     ...(typeof row.maxLifetime === 'number' ? { maxLifetime: row.maxLifetime } : {}),
+    ...(row.resources ? { resources: row.resources } : {}),
     scopes: row.scopes,
   }
 }
@@ -213,6 +221,7 @@ function toRow(policy: Stored): Omit<Row, 'id'> {
     clientId: policy.clientId,
     issuer: policy.issuer,
     maxLifetime: policy.maxLifetime ?? null,
+    resources: policy.resources ? [...policy.resources] : null,
     scopes: [...policy.scopes],
   }
 }
@@ -245,6 +254,10 @@ const policySchema: StandardSchemaV1<Stored> = {
         return issues('claims must map each claim to a string or an array of strings.')
       // A policy without claims matches every token of the issuer and audience.
       if (Object.keys(claims).length === 0) return issues('claims must name at least one claim.')
+
+      const resources = policy['resources']
+      if (resources !== undefined && !strings(resources))
+        return issues('resources must be an array of strings.')
 
       const maxLifetime = policy['maxLifetime']
       if (maxLifetime !== undefined && (typeof maxLifetime !== 'number' || maxLifetime <= 0))

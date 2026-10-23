@@ -334,6 +334,7 @@ describe('handshakes', () => {
           audience: server.url,
           issuer: issuer.url,
           repositoryId: '812345',
+          resources: [`${api.url}/v1`],
           scopes: ['data:read'],
         }),
       )

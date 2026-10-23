@@ -9,6 +9,9 @@ import type * as Policy from './Policy.js'
 /** Grant type of the token exchange (RFC 8693 §2.1). */
 const grantType = 'urn:ietf:params:oauth:grant-type:token-exchange'
 
+/** Largest token request body, in bytes. A subject token is a few kilobytes. */
+const maxBody = 65_536
+
 /** Token type of an issued access token (RFC 8693 §3). */
 const accessTokenType = 'urn:ietf:params:oauth:token-type:access_token'
 
@@ -17,6 +20,8 @@ export function create(options: create.Options): Server {
   const fetch = options.fetch ?? globalThis.fetch
   const jwks = Jwks.create({ fetch })
   const maxLifetime = options.maxLifetime ?? 900
+
+  if (typeof options.policies !== 'function') Subject.check(options.policies)
 
   const issuer = new URL(options.issuer)
   const path = issuer.pathname.replace(/\/$/, '')
@@ -29,7 +34,14 @@ export function create(options: create.Options): Server {
     if (!type.startsWith('application/x-www-form-urlencoded'))
       return error(400, 'invalid_request', 'The request must be application/x-www-form-urlencoded.')
 
-    const form = new URLSearchParams(await request.text())
+    const text = await read(request, maxBody)
+    if (text === undefined)
+      return error(
+        400,
+        'invalid_request',
+        `The request body exceeds ${maxBody} bytes. Send only the token exchange fields.`,
+      )
+    const form = new URLSearchParams(text)
     if (form.get('grant_type') !== grantType)
       return error(400, 'unsupported_grant_type', `grant_type must be ${grantType}.`)
 
@@ -43,6 +55,8 @@ export function create(options: create.Options): Server {
       jwks,
       maxLifetime,
       policies,
+      // RFC 8693 §2.1: `resource` and `audience` both name where the client uses the token.
+      resources: [...form.getAll('resource'), ...form.getAll('audience')],
       scope: form.get('scope') ?? undefined,
       subjectToken: form.get('subject_token') ?? undefined,
       subjectTokenType: form.get('subject_token_type') ?? undefined,
@@ -54,6 +68,7 @@ export function create(options: create.Options): Server {
       expiresAt: result.expiresAt,
       policy: result.policy,
       request,
+      resources: result.resources,
       scopes: result.scopes,
     })
     // The credential must not outlive the subject token. A later expiry is a defect of `issue`.
@@ -128,6 +143,8 @@ export type IssueContext = {
   policy: Policy.Policy
   /** The token request. */
   request: Request
+  /** RFC 8707 resources that the request names, each a resource of the policy. Empty when it names none. */
+  resources: readonly string[]
   /** Scopes of the credential: the requested scopes, else the scopes of the policy. */
   scopes: readonly string[]
 }
@@ -154,4 +171,25 @@ function error(status: number, code: string, description: string): Response {
     { error: code, error_description: description },
     { headers: { 'cache-control': 'no-store' }, status },
   )
+}
+
+/** Returns the body of `request` as text, or `undefined` when it exceeds `limit` bytes. */
+async function read(request: Request, limit: number): Promise<string | undefined> {
+  if (Number(request.headers.get('content-length') ?? 0) > limit) return undefined
+  if (!request.body) return ''
+
+  const chunks: Uint8Array[] = []
+  let size = 0
+  for await (const chunk of request.body as AsyncIterable<Uint8Array>) {
+    size += chunk.byteLength
+    if (size > limit) return undefined
+    chunks.push(chunk)
+  }
+  const bytes = new Uint8Array(size)
+  let offset = 0
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return new TextDecoder().decode(bytes)
 }

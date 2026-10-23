@@ -18,6 +18,8 @@ export function create(options: create.Options): Resource {
   const policies = options.policies ?? []
   const required = options.scopes ?? []
 
+  Subject.check(policies)
+
   // A subject token for another API must not pass here, so each policy names this API.
   for (const policy of policies)
     if (policy.audience !== options.resource)

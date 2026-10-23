@@ -14,6 +14,11 @@ export type Policy = {
   issuer: string
   /** Longest lifetime of the issued credential, in seconds. It also ends no later than the subject token. */
   maxLifetime?: number | undefined
+  /**
+   * RFC 8707 resources that a request may name. A request for another resource receives
+   * `invalid_target`. Default: none, so a request that names a resource is refused.
+   */
+  resources?: readonly string[] | undefined
   /** Scopes of the issued credential. A request may ask for a subset. */
   scopes: readonly string[]
 }
@@ -39,6 +44,7 @@ export function githubActions(options: githubActions.Options): Policy {
     id: options.id ?? `githubActions:${options.repositoryId}:${options.ref ?? '*'}`,
     issuer: options.issuer ?? 'https://token.actions.githubusercontent.com',
     ...(options.maxLifetime ? { maxLifetime: options.maxLifetime } : {}),
+    ...(options.resources ? { resources: options.resources } : {}),
     scopes: options.scopes,
   }
 }
@@ -61,6 +67,8 @@ export declare namespace githubActions {
     ref?: string | undefined
     /** `repository_id` of the repository, which stays the same after a rename. */
     repositoryId: string
+    /** RFC 8707 resources that a request may name. */
+    resources?: readonly string[] | undefined
     scopes: readonly string[]
   }
 }
@@ -88,6 +96,7 @@ export function vercel(options: vercel.Options): Policy {
     id: options.id ?? `vercel:${options.projectId}:${options.environment ?? '*'}`,
     issuer,
     ...(options.maxLifetime ? { maxLifetime: options.maxLifetime } : {}),
+    ...(options.resources ? { resources: options.resources } : {}),
     scopes: options.scopes,
   }
 }
@@ -110,6 +119,8 @@ export declare namespace vercel {
     ownerId: string
     /** `project_id` of the project. */
     projectId: string
+    /** RFC 8707 resources that a request may name. */
+    resources?: readonly string[] | undefined
     scopes: readonly string[]
     /** Slug of the team, for the team issuer. */
     team?: string | undefined

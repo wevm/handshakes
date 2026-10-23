@@ -181,6 +181,53 @@ describe('create', () => {
     expect(result.status).toMatchInlineSnapshot(`400`)
   })
 
+  test('rejects a resource that the policy does not list', async () => {
+    const subjectToken = await issuer.sign({ audience: server.url, preset: 'githubActions' })
+
+    const result = await exchange({
+      resource: 'https://other.example.com',
+      subject_token: subjectToken,
+    })
+
+    expect(result).toMatchInlineSnapshot(`
+      {
+        "body": {
+          "error": "invalid_target",
+          "error_description": "The requested resource is not a resource of the trust policy. Request a resource that the policy lists.",
+        },
+        "status": 400,
+      }
+    `)
+  })
+
+  test('rejects a policy without claims', () => {
+    expect(() =>
+      Server.create({
+        issue: async () => ({ accessToken: 'unused', expiresAt: 0 }),
+        issuer: 'https://auth.example.com',
+        policies: [
+          Policy.from({
+            audience: 'https://auth.example.com',
+            claims: {},
+            id: 'any',
+            issuer: 'https://token.actions.githubusercontent.com',
+            scopes: [],
+          }),
+        ],
+      }),
+    ).toThrowErrorMatchingInlineSnapshot(
+      `[TypeError: The policy any has no claims, so it matches every token of https://token.actions.githubusercontent.com. Add a claim that names the workload, such as \`repository_id\`.]`,
+    )
+  })
+
+  test('rejects a body larger than 64 KiB', async () => {
+    const result = await exchange({ subject_token: 'x'.repeat(70_000) })
+
+    expect(result.body['error_description']).toMatchInlineSnapshot(
+      `"The request body exceeds 65536 bytes. Send only the token exchange fields."`,
+    )
+  })
+
   test('rejects another grant type', async () => {
     const result = await exchange({ grant_type: 'client_credentials' })
 

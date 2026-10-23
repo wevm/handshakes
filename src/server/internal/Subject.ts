@@ -12,6 +12,15 @@ export const types = [
   'urn:ietf:params:oauth:token-type:id_token',
 ] as const
 
+/** Throws a `TypeError` for a policy without claims, which would match every token of its issuer. */
+export function check(policies: readonly Policy.Policy[]): void {
+  for (const policy of policies)
+    if (Object.keys(policy.claims).length === 0)
+      throw new TypeError(
+        `The policy ${policy.id} has no claims, so it matches every token of ${policy.issuer}. Add a claim that names the workload, such as \`repository_id\`.`,
+      )
+}
+
 /** Allowed difference between clocks for `nbf` and `iat`, in seconds. */
 const leeway = 60
 
@@ -23,10 +32,12 @@ export type Result =
       expiresAt: number
       ok: true
       policy: Policy.Policy
+      /** The RFC 8707 resources of the request. Each is a resource of the policy. */
+      resources: readonly string[]
       scopes: readonly string[]
     }
   | {
-      error: 'invalid_grant' | 'invalid_request' | 'invalid_scope'
+      error: 'invalid_grant' | 'invalid_request' | 'invalid_scope' | 'invalid_target'
       errorDescription: string
       ok: false
     }
@@ -39,6 +50,8 @@ export async function verify(options: {
   jwks: Jwks.Jwks
   maxLifetime: number
   policies: readonly Policy.Policy[]
+  /** RFC 8707 resources of the request. */
+  resources?: readonly string[] | undefined
   scope?: string | undefined
   subjectToken: string | undefined
   subjectTokenType: string | undefined
@@ -66,7 +79,10 @@ export async function verify(options: {
   if ((algorithm !== 'RS256' && algorithm !== 'ES256') || typeof issuer !== 'string') return refused
 
   // Only issuers that a policy names are contacted, so a token cannot direct requests elsewhere.
-  const candidates = options.policies.filter((policy) => policy.issuer === issuer)
+  // A policy without claims would match every token of its issuer, such as every GitHub repository.
+  const candidates = options.policies.filter(
+    (policy) => policy.issuer === issuer && Object.keys(policy.claims).length > 0,
+  )
   if (candidates.length === 0) return refused
 
   const kid = typeof decoded.header['kid'] === 'string' ? decoded.header['kid'] : undefined
@@ -102,12 +118,22 @@ export async function verify(options: {
       ok: false,
     }
 
+  const resources = options.resources ?? []
+  if (resources.some((resource) => !(policy.resources ?? []).includes(resource)))
+    return {
+      error: 'invalid_target',
+      errorDescription:
+        'The requested resource is not a resource of the trust policy. Request a resource that the policy lists.',
+      ok: false,
+    }
+
   const lifetime = policy.maxLifetime ?? options.maxLifetime
   return {
     claims: decoded.payload,
     expiresAt: Math.min(exp * 1000, Date.now() + lifetime * 1000),
     ok: true,
     policy,
+    resources,
     scopes: requested && requested.length > 0 ? requested : policy.scopes,
   }
 }

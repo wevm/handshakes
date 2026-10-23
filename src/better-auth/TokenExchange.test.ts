@@ -138,6 +138,17 @@ describe('tokenExchange', () => {
     `)
   })
 
+  test('refuses a resource that the policy does not list', async () => {
+    const subjectToken = await issuer.sign({ audience: server.url, preset: 'githubActions' })
+
+    const result = await exchange({
+      resource: 'https://other.example.com',
+      subject_token: subjectToken,
+    })
+
+    expect(result.body['error']).toMatchInlineSnapshot(`"invalid_target"`)
+  })
+
   test('refuses a client that is not the client of the policy', async () => {
     const subjectToken = await issuer.sign({ audience: server.url, preset: 'githubActions' })
 
