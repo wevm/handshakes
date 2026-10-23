@@ -1,0 +1,167 @@
+# CLI [Resolves short-lived access tokens for shells, CI jobs, and agents]
+
+The `handshakes` binary resolves an access token in the same order as [`Client.create`](/api/core/client/create). A [profile](/cli/configuration) names the authorization server and the client. The CLI then prints the token, runs a command with it, or sends a request with it.
+
+```sh
+# Runs the device grant once and stores the grant
+handshakes authorize example
+
+# Runs the tests with an access token in EXAMPLE_API_KEY
+handshakes exec example -- pnpm test
+```
+
+## Install
+
+The `handshakes` package provides the binary. Install it in the project, or run it through the package runner.
+
+:::note
+No release of the `handshakes` package is published yet. The commands below apply after the first release.
+:::
+
+:::code-group
+
+```sh [pnpm]
+# Adds the binary to the project
+pnpm add -D handshakes
+```
+
+```sh [npm]
+# Adds the binary to the project
+npm install -D handshakes
+```
+
+```sh [npx]
+# Runs the binary without an install
+npx handshakes --help
+```
+
+:::
+
+## Signature
+
+```sh
+# A command, an optional profile, and options
+handshakes <command> [profile] [options]
+```
+
+The profile argument names a profile of the [configuration](/cli/configuration). Without it, the CLI uses `HANDSHAKES_PROFILE`, else the `default` profile.
+
+## Commands
+
+| Command                       | Alias    | Description                                                                    |
+| ----------------------------- | -------- | ------------------------------------------------------------------------------ |
+| [`authorize`](/cli/authorize) | `login`  | Runs the device grant (RFC 8628) and stores the grant.                         |
+| [`exec`](/cli/exec)           |          | Runs a command with an access token in an environment variable.                |
+| [`fetch`](/cli/fetch)         |          | Sends a request with an access token, and prints the response body.            |
+| [`profiles`](/cli/profiles)   |          | Lists the profiles, the file of each, and the default profile.                 |
+| [`revoke`](/cli/revoke)       | `logout` | Revokes the refresh token (RFC 7009) and deletes the stored grant.             |
+| [`status`](/cli/status)       |          | Names the method that applies. Never prints a token.                           |
+| [`token`](/cli/token)         |          | Prints the access token of a profile, or with `--audience`, the subject token. |
+
+## Resolution Order
+
+The `exec`, `fetch`, and `token` commands resolve the access token in this order:
+
+1. If a source detects its platform, such as GitHub Actions, the CLI exchanges the subject token of the platform (RFC 8693).
+2. If a grant is stored for the profile, the CLI uses it, and refreshes it under a lock when it expires soon.
+3. If stdin is a terminal and `CI` is not set, the CLI runs the device grant and stores the grant.
+4. Otherwise, the command exits with code 3 and `AUTHORIZATION_REQUIRED`.
+
+A detected source that fails stops the command. The CLI never tries the next source, since that can select a different identity. The CLI detects the sources of `handshakes/node`: `vercel`, `githubActions`, `gitlab`, `circleci`, `buildkite`, and `gcp`, in this order.
+
+## Shared Options
+
+Every command that takes a profile accepts these options. Each option replaces the setting of the profile for one run.
+
+| Option        | Replaces   | Description                                    |
+| ------------- | ---------- | ---------------------------------------------- |
+| `--client-id` | `clientId` | OAuth client for the device grant and refresh. |
+| `--issuer`    | `issuer`   | Authorization server.                          |
+| `--resource`  | `resource` | RFC 8707 resource of the access token.         |
+| `--scope`     | `scope`    | Space-separated scopes.                        |
+
+## Output
+
+The CLI writes the result of a command, or its error, to stdout. The device grant writes the verification page and the user code to stderr, so stdout holds only the result.
+
+```sh
+# Prints the result as JSON
+handshakes status example --json
+```
+
+Without `--format`, the CLI prints TOON, a compact text format. Two commands print plain text instead:
+
+- **`token`:** The token alone, followed by a line break, so `$(handshakes token example)` reads it directly.
+- **`fetch`:** The response body, and with `--include`, the status line and the headers before it.
+
+An error holds a `code`, such as `NO_PROFILE`, and a `message` that ends with the steps that resolve it.
+
+```txt
+code: NO_PROFILE
+message: "No profile is named missing. To resolve: Run `handshakes profiles` to list the profiles."
+```
+
+## Global Options
+
+Incur, the CLI framework, adds these options to every command.
+
+| Option                                   | Description                                                 |
+| ---------------------------------------- | ----------------------------------------------------------- |
+| `--filter-output <keys>`                 | Filters the output by key paths, such as `grant.method`.    |
+| `--format <toon\|json\|yaml\|md\|jsonl>` | Prints the output in this format. `--json` is a short form. |
+| `--full-output`                          | Prints the full envelope, with `ok`, `data`, and `meta`.    |
+| `--help`                                 | Prints the help of the command.                             |
+| `--llms`, `--llms-full`                  | Prints a manifest of the commands for a language model.     |
+| `--mcp`                                  | Starts the CLI as an [MCP](/cli/mcp) server on stdio.       |
+| `--schema`                               | Prints the JSON Schema of a command.                        |
+| `--token-count`                          | Prints the token count of the output, not the output.       |
+| `--token-limit <n>`                      | Limits the output to `n` tokens of a language model.        |
+| `--token-offset <n>`                     | Skips the first `n` tokens of the output.                   |
+
+The token options count tokens of a language model, not OAuth tokens. The root help also lists `--update` and `--version`, and begins with the list of commands:
+
+```txt
+$ handshakes --help
+handshakes — Resolves short-lived OAuth access tokens from the platform identity or a stored grant, in place of stored API keys.
+
+Usage: handshakes <command>
+
+Commands:
+  authorize  Runs the device grant (RFC 8628) and stores the grant. Alias: login.
+  exec       Runs the command after `--` with an access token in an environment variable, then exits with its code.
+  fetch      Sends a request with an access token, and prints the response body. Without a profile, discovers the authorization server from the API.
+  login      Runs the device grant (RFC 8628) and stores the grant. Alias: login.
+  logout     Revokes the refresh token (RFC 7009) and deletes the stored grant. Alias: logout.
+  profiles   Lists the profiles, the file of each, and the default profile.
+  revoke     Revokes the refresh token (RFC 7009) and deletes the stored grant. Alias: logout.
+  status     Names the source that detects its platform here and, for a profile, the stored grant and its expiry.
+  token      Prints the access token of a profile. With --audience, prints the OIDC token that the platform signs for this code.
+
+Integrations:
+  completions  Generate shell completion script
+  mcp          Register as MCP server (add, doctor)
+  skills       Sync skill files to agents (add, list)
+```
+
+## Exit Codes
+
+| Code  | Error codes                                                                               | Condition                                                                                         |
+| ----- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| 0     |                                                                                           | The command succeeds.                                                                             |
+| 1     | `FAILED`, `AUDIENCE_MISMATCH`, `SOURCE_FAILED`, `UNKNOWN`, `COMMAND_NOT_FOUND`            | Another error, such as an issuer without metadata, a rejected token exchange, or an unknown flag. |
+| 2     | `NO_PROFILE`, `NO_COMMAND`, `NO_URL`, `INVALID_ENV`, `INVALID_HEADER`, `OUTSIDE_RESOURCE` | Invalid usage, such as an unknown profile or no command after `--`.                               |
+| 3     | `AUTHORIZATION_REQUIRED`, `SOURCE_NOT_FOUND`                                              | No source detects its platform, no grant is stored, and the device grant cannot run.              |
+| 4     | `REJECTED`                                                                                | The server rejects a request with `invalid_grant` (`Client.RejectedError`).                       |
+| 22    | `HTTP_ERROR`                                                                              | `fetch --fail` receives HTTP 400 or more.                                                         |
+| 127   |                                                                                           | `exec` cannot start the command.                                                                  |
+| Other |                                                                                           | `exec` exits with the exit code of the command.                                                   |
+
+A refresh that receives `invalid_grant` deletes the stored grant. The next step of the resolution order then applies, so the command runs the device grant or exits with code 3.
+
+## Integrations
+
+Incur also adds three integration commands:
+
+- **`completions`:** Prints a completion script for the shell.
+- **`mcp`:** Registers the CLI as an MCP server for an agent. See [MCP](/cli/mcp).
+- **`skills`:** Writes skill files of the CLI for coding agents.

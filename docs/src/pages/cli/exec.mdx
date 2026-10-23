@@ -1,0 +1,141 @@
+# exec [Runs a command with an access token in an environment variable]
+
+`handshakes exec` resolves an access token, then runs the command after `--` with the token in one environment variable. The CLI exits with the exit code of the command. Code that reads an API key from the environment then needs no change.
+
+```sh
+# Runs the tests with an access token in EXAMPLE_API_KEY
+handshakes exec example -- pnpm test
+```
+
+## Signature
+
+```sh
+# The words after -- are the command and its arguments
+handshakes exec [profile] [options] -- <command> [arguments]
+```
+
+The options of `exec` come before `--`. The CLI passes every word after `--` to the command unchanged.
+
+## Arguments
+
+### profile
+
+- **Type:** `string`
+- **Default:** `HANDSHAKES_PROFILE`, else the `default` profile
+
+The name of a profile of the [configuration](/cli/configuration).
+
+```sh
+# Uses the example profile, and its env field
+handshakes exec example -- node scripts/sync.ts
+```
+
+### command
+
+- **Type:** `readonly string[]`
+
+The program and its arguments, after `--`. The CLI starts the program directly, without a shell. For pipes or variables, run a shell as the program.
+
+```sh
+# Runs a shell, which expands the variable at run time
+handshakes exec example -- sh -c 'curl -H "Authorization: Bearer $EXAMPLE_API_KEY" https://api.example.com/v1/items'
+```
+
+## Options
+
+### --env
+
+- **Type:** `string`
+- **Default:** `env` of the profile, else `HANDSHAKES_TOKEN`
+
+The environment variable that holds the access token. The name starts with an uppercase letter, and holds only uppercase letters, digits, and `_`.
+
+```sh
+# Sets API_TOKEN for the command
+handshakes exec example --env API_TOKEN -- pnpm test
+```
+
+The CLI refuses a variable that loads code or changes how a program runs. A project file can set `env`, so a file in a cloned repository must not point the token at such a variable.
+
+| Refused names                                                                                      |
+| -------------------------------------------------------------------------------------------------- |
+| `BASH_ENV`, `BROWSER`, `EDITOR`, `ENV`, `HOME`, `IFS`, `NODE_OPTIONS`, `PAGER`, `PATH`, `PERL5OPT` |
+| `PYTHONPATH`, `PYTHONSTARTUP`, `RUBYOPT`, `SHELL`, `VISUAL`                                        |
+| Names that start with `DYLD_`, `LD_`, `NODE_`, `NPM_CONFIG_`, or `GIT_`                            |
+| Names that end with `_PROXY`                                                                       |
+
+### --client-id
+
+- **Type:** `string`
+- **Default:** `clientId` of the profile
+
+The OAuth client for the device grant and refresh.
+
+```sh
+# Refreshes the stored grant of another client
+handshakes exec example --client-id example-cli -- pnpm test
+```
+
+### --issuer
+
+- **Type:** `string`
+- **Default:** `issuer` of the profile
+
+The authorization server.
+
+```sh
+# In CI, exchanges the subject token without a configuration file, into HANDSHAKES_TOKEN
+handshakes exec --issuer https://auth.example.com -- pnpm test
+```
+
+### --resource
+
+- **Type:** `string`
+- **Default:** `resource` of the profile
+
+The RFC 8707 resource of the access token.
+
+```sh
+# Requests a token for one API
+handshakes exec example --resource https://api.example.com -- pnpm test
+```
+
+### --scope
+
+- **Type:** `string`
+- **Default:** `scope` of the profile
+
+The space-separated scopes of the access token.
+
+```sh
+# Requests a token with fewer scopes
+handshakes exec example --scope data:read -- pnpm test
+```
+
+## Behavior
+
+The command inherits the environment, stdin, stdout, and stderr of the CLI. The CLI adds only the token variable.
+
+The CLI resolves the token once, before the command starts, in the [resolution order](/cli). The command must finish before the token expires, which is often within minutes. For a longer run, the command can call [`handshakes token`](/cli/token) when it needs a new token.
+
+:::note
+Other processes of the same user can read the environment of the command. This is acceptable for a token that expires in minutes.
+:::
+
+## Output
+
+`exec` prints nothing of its own. The output is the output of the command.
+
+## Errors
+
+| Error code               | Exit code | Condition                                                                               |
+| ------------------------ | --------- | --------------------------------------------------------------------------------------- |
+| `NO_COMMAND`             | 2         | No command follows `--`.                                                                |
+| `NO_PROFILE`             | 2         | No profile applies and `--issuer` is not set, or the profile argument names no profile. |
+| `INVALID_ENV`            | 2         | The variable name is not valid, or the CLI refuses it.                                  |
+| `AUTHORIZATION_REQUIRED` | 3         | No source detects its platform, no grant is stored, and the device grant cannot run.    |
+| `REJECTED`               | 4         | The server rejects a request with `invalid_grant`.                                      |
+| `FAILED`                 | 1         | Another error, such as a rejected token exchange.                                       |
+|                          | 127       | The command cannot start, such as a program that does not exist.                        |
+|                          | 1         | The command stops on a signal.                                                          |
+|                          | Other     | The exit code of the command.                                                           |

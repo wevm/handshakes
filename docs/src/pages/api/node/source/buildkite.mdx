@@ -1,0 +1,40 @@
+# Source.buildkite [Returns a source that requests a subject token from the Buildkite agent]
+
+`Source.buildkite` runs `buildkite-agent oidc request-token --audience <audience>`, which returns a token for any audience. The agent reads its job token from the environment of the job.
+
+```ts [client.ts]
+import { Client } from 'handshakes'
+import { Source } from 'handshakes/node'
+
+const client = Client.create({
+  issuer: 'https://auth.example.com',
+  // Source.defaults of handshakes/node includes Source.buildkite
+  sources: Source.defaults,
+})
+```
+
+## Signature
+
+```ts
+// The Buildkite source takes no options
+Source.buildkite()
+```
+
+## Returns
+
+- **Type:** `Source.Source`
+
+A source named `buildkite`. [`Source`](/api/core/source) describes the contract.
+
+- **Detection:** `detect` returns `true` when `BUILDKITE` is `true`.
+- **Request:** `token` runs `buildkite-agent` with the environment of the source, and returns its output without whitespace. The command times out after 30 seconds.
+- **Audience:** Any audience. The agent signs a new token for each request.
+
+```sh
+# The command that the source runs for the audience of the token
+buildkite-agent oidc request-token --audience https://auth.example.com
+```
+
+## Errors
+
+- **`Source.RequestError`:** `buildkite-agent` returns no token. When the command does not exist, the steps say to run the job on a Buildkite agent. Otherwise, the steps say to update the agent to a version with `oidc request-token`.

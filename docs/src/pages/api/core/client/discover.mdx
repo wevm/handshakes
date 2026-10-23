@@ -1,0 +1,75 @@
+# Client.discover [Returns a client for the authorization server that an API names]
+
+`discover` reads the protected resource metadata of an API ([RFC 9728](https://www.rfc-editor.org/rfc/rfc9728)). It then returns a [client](/api/core/client/create) for the first authorization server that the metadata names, with the `resource` of the metadata as its RFC 8707 resource. The code needs no issuer of its own.
+
+```ts [example.ts]
+import { Client } from 'handshakes'
+
+// Reads https://api.example.com/.well-known/oauth-protected-resource
+const client = await Client.discover({ resource: 'https://api.example.com' })
+
+const response = await client.fetch('https://api.example.com/v1/items')
+```
+
+## Signature
+
+```ts
+// Takes the options of Client.create without endpoints, issuer, and resource
+await Client.discover(options)
+```
+
+## Parameters
+
+`discover` takes every option of [`Client.create`](/api/core/client/create) except `endpoints`, `issuer`, and `resource`. It also takes exactly one of `resource` and `url`.
+
+### options.resource
+
+- **Type:** `string`
+
+The resource identifier of the API, such as `https://api.example.com`. `discover` reads the metadata at the well-known URL of the resource ([RFC 9728 §3.1](https://www.rfc-editor.org/rfc/rfc9728#section-3.1)). The `resource` of the metadata must equal this value exactly ([RFC 9728 §3.3](https://www.rfc-editor.org/rfc/rfc9728#section-3.3)).
+
+```ts
+// Inserts the well-known suffix before the path of the resource
+await Client.discover({ resource: 'https://api.example.com/v1' })
+```
+
+### options.url
+
+- **Type:** `string`
+
+A URL of the API. `discover` sends one `GET` to it without credentials, and reads `resource_metadata` from the `WWW-Authenticate` challenge of the response ([RFC 9728 §5.1](https://www.rfc-editor.org/rfc/rfc9728#section-5.1)). Then it reads the metadata at that URL.
+
+```ts
+// Reads the metadata URL from the 401 challenge of the API
+await Client.discover({ url: 'https://api.example.com/v1/items' })
+```
+
+The URL must lie within the `resource` of the metadata: the same origin, and a path at or below the path of the resource. Otherwise `discover` throws `Client.DiscoveryError`. So an API cannot direct a token to another resource through its challenge.
+
+## Returns
+
+- **Type:** `Promise<Client.Client>`
+
+The client of [`Client.create`](/api/core/client/create), with `issuer` set to the first entry of `authorization_servers`, and `resource` set to the `resource` of the metadata.
+
+```ts
+// The client sends tokens only to URLs within the discovered resource
+const client = await Client.discover({ url: 'https://api.example.com/v1/items' })
+const token = await client.token()
+```
+
+## Errors
+
+- **`Client.DiscoveryError`:** The challenge has no `resource_metadata`, the URL lies outside the `resource` of the metadata, or the metadata names no authorization server.
+- **`Metadata.ResourceNotFoundError`:** The metadata does not exist, is not valid, or names another `resource` than `options.resource`.
+
+```ts
+import { Client, Metadata } from 'handshakes'
+
+await Client.discover({ url: 'https://api.example.com/v1/items' }).catch((error: unknown) => {
+  // An API without RFC 9728 metadata needs an explicit issuer
+  if (error instanceof Client.DiscoveryError || error instanceof Metadata.ResourceNotFoundError)
+    console.error(error.message)
+  else throw error
+})
+```

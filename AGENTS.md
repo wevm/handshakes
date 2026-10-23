@@ -135,7 +135,8 @@ Applies to the README, guides, and other Markdown documentation. Prose Conventio
 - Use bullets for enumerable content and tables for comparisons. Start each item of a topic list with a bold label that ends in a colon.
 - Write headings in Title Case with fewer than four words.
 - Give every code block at least one comment. Formats without comments, such as JSON and HTTP, are exempt.
-- Mark unimplemented APIs with `> [!NOTE]` callouts. Examples must not imply that they already work.
+- Mark unimplemented APIs with `> [!NOTE]` callouts, or `:::note` in Vocs pages. Examples must not imply that they already work.
+- Add each new page of `docs/` to the sidebar in `docs/vocs.config.ts`, and update the API and CLI reference pages in the same change as the API or the command.
 
 ## Prose Conventions
 
@@ -204,6 +205,7 @@ Applies to documentation, comments, TSDoc, interface copy, commit messages, and 
 - `src/cli/`: the incur CLI. `bin.ts` is the entry, and each command lives in its own file.
 - `src/internal/`: helpers that no entry exports.
 - `test/`: the shared harness, such as `test/Server.ts`.
+- `docs/`: the Vocs documentation site, a private workspace package. Pages live in `docs/src/pages/`, organized as Introduction, Guides, API Reference, and CLI Reference. `docs/vocs.config.ts` holds the sidebar.
 - `.agent/plans/handshakes.md`: the plan, the public API, and the acceptance gate of each phase.
 
 ## Tooling
@@ -212,12 +214,14 @@ Applies to documentation, comments, TSDoc, interface copy, commit messages, and 
 - Prettier is banned. Use Vite Plus with oxfmt for formatting and oxlint for linting, configured in `vite.config.ts`.
 - Use zile for library builds and development linking.
 - Put scripts, devDependencies, and packageManager before `[!start-pkg]` in package.json. Package metadata and runtime dependencies follow it. Alphabetize entries within each group.
-- Use the single scaffold tsconfig.json. Zile derives build inputs from package entrypoints. Add each entry to `paths` in `tsconfig.json` and to the test aliases in `vite.config.ts`.
+- Use the single scaffold tsconfig.json for the package. `docs/` has its own tsconfig.json, and the root one excludes it. Zile derives build inputs from package entrypoints. Add each entry to `paths` in `tsconfig.json` and to the test aliases in `vite.config.ts`.
 - `incur` is the one runtime dependency, for the CLI. Better Auth packages are optional peers.
+- Use Vocs for the documentation site. `docs/src/pages/_root.css` holds the theme overrides: black and a lighter black in dark mode, and square corners.
 
 ## Commands
 
 - `pnpm build` builds the package with zile. `pnpm dev` links source entrypoints with `zile dev`.
 - `pnpm check` runs `vp check --fix`. `pnpm check:types` runs TypeScript.
 - `pnpm test` runs the integration suites with `vp test`.
+- `pnpm docs:dev` serves the documentation site. `pnpm docs:build` builds it and fails on a dead link.
 - `node src/cli/bin.ts` runs the CLI from source while it imports only dependencies. The CLI test bundles it with esbuild.

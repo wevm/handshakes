@@ -1,0 +1,53 @@
+# Agents [Documentation for coding agents, and MCP tools that never return a token]
+
+## Agent Prompt
+
+Paste this prompt into a coding agent:
+
+```txt
+Read github.com/wevm/handshakes and replace the stored API keys of my project with Handshakes.
+```
+
+Include the requested change in the prompt. Ask the agent to read the authentication code, the CI workflows, and the project instructions before it edits them.
+
+## Fetch Documentation
+
+The site serves the Markdown of each page at its path with `.md` appended, and to requests with `Accept: text/markdown`. `/llms.txt` links every page in sidebar order, and `/llms-full.txt` holds every page in one file.
+
+```sh
+# Fetches one page as Markdown. DOCS_URL is the origin of this site.
+curl "$DOCS_URL/introduction/agents.md"
+
+# Fetches the index of every page.
+curl "$DOCS_URL/llms.txt"
+```
+
+## MCP Tools
+
+`handshakes --mcp` serves two commands as MCP tools over stdio: `fetch` and `status`. There is no `token` tool, so a token value never enters the context of a model. [MCP](/cli/mcp) lists the tools and their limits.
+
+```sh
+# Registers the CLI as an MCP server for the agents on this device.
+handshakes mcp add
+
+# Checks that the server starts and lists its tools.
+handshakes mcp doctor
+```
+
+Under `--mcp`, `fetch` accepts no `issuer`, `resource`, `clientId`, or `scope`, and reads no local file. A prompt therefore cannot send a token to another server, or read a file through the request body.
+
+## Project Instructions
+
+Record the conventions of the project in its agent instruction file, such as `AGENTS.md`. Adapt the profile names and commands to the repository:
+
+```md [AGENTS.md]
+<!-- Rules for agents that change authentication in this project. -->
+
+## Handshakes
+
+- Never print, log, or commit an access token, a refresh token, or an API key.
+- Call APIs through `client.fetch`, or through `handshakes exec <profile> -- <command>`.
+- Request every subject token with an explicit audience.
+- Match trust policies on identifiers that cannot change, such as `repository_id`, never on names.
+- Run `handshakes status` to check which source or grant applies.
+```

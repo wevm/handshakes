@@ -1,0 +1,79 @@
+# Vercel AI Gateway [Sends the Vercel OIDC token to AI Gateway directly]
+
+## Overview
+
+:::note
+This integration has no automated test in this repository yet.
+:::
+
+Vercel AI Gateway accepts the OIDC token of a Vercel project directly, with no token exchange. This token is the subject token: the JWT that Vercel signs for the running code. Its audience is the team, such as `https://vercel.com/acme`.
+
+`Identity.token` returns the subject token itself. The code sends it to AI Gateway in place of an AI Gateway API key. No authorization server takes part.
+
+| Setting  | Value                       |
+| -------- | --------------------------- |
+| Audience | `https://vercel.com/<team>` |
+| Source   | `Source.vercel`             |
+| Exchange | None                        |
+
+## Walkthrough
+
+:::steps
+
+### Request the Token
+
+`Identity.token` requires an explicit audience, so a token for one service never reaches another. The Vercel token already carries the team audience, so `Source.vercel` returns it with no request.
+
+```ts [api/summarize.ts]
+import { createGateway } from '@ai-sdk/gateway'
+import { generateText } from 'ai'
+import { Identity } from 'handshakes'
+
+export async function POST() {
+  // Inside a request, `Source.vercel` reads the token of the request.
+  const token = await Identity.token({ audience: 'https://vercel.com/acme' })
+  const gateway = createGateway({ apiKey: token.value })
+
+  const { text } = await generateText({
+    model: gateway('anthropic/claude-sonnet-4.5'),
+    prompt: 'Summarize the release notes.',
+  })
+  return Response.json({ text })
+}
+```
+
+### Deploy the Project
+
+The project needs OIDC federation, as the [Vercel](/guides/platforms/vercel) guide shows. In Vercel Functions, request the token inside a request, since the request headers hold it.
+
+:::
+
+## Recipes
+
+### Local Development
+
+On a device (such as a laptop), `vercel env pull` writes `VERCEL_OIDC_TOKEN` to `.env.local`. The token is valid for 12 hours. Load the file into the environment, then run the code.
+
+```sh
+# Writes VERCEL_OIDC_TOKEN, then runs the script with it.
+vercel link
+vercel env pull
+node --env-file=.env.local summarize.ts
+```
+
+### The CLI
+
+`handshakes token --audience` prints the subject token. A shell command can pass it to a tool that reads an API key from a variable.
+
+```sh
+# Prints the Vercel OIDC token for the team audience.
+handshakes token --audience https://vercel.com/acme
+```
+
+## More
+
+- [Subject Tokens](/guides/subject-tokens)
+- [Vercel](/guides/platforms/vercel)
+- [Identity.token](/api/core/identity/token)
+- [token](/cli/token)
+- [Vercel AI Gateway documentation](https://vercel.com/docs/ai-gateway)

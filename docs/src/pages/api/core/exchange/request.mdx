@@ -1,0 +1,269 @@
+# Exchange.request [Exchanges a subject token for an access token]
+
+`request` sends the token exchange request of [RFC 8693 §2.1](https://www.rfc-editor.org/rfc/rfc8693#section-2.1) to a token endpoint. The subject token is usually the OIDC token of the platform, from [`Identity.token`](/api/core/identity/token). [`Client.create`](/api/core/client/create) calls `request`, then caches the access token.
+
+```ts [example.ts]
+import { Exchange, Identity } from 'handshakes'
+
+// The OIDC token of the platform, with the authorization server as its audience
+const subject = await Identity.token({ audience: 'https://auth.example.com' })
+
+// [!code hl:6]
+// Exchanges the subject token for an access token that expires no later than it
+const issued = await Exchange.request({
+  endpoint: 'https://auth.example.com/oauth2/token',
+  scope: 'data:read',
+  subjectExpiresAt: subject.expiresAt,
+  subjectToken: subject.value,
+})
+```
+
+## Signature
+
+```ts
+// An access token from one token exchange
+const issued = await Exchange.request(options)
+```
+
+The request is `application/x-www-form-urlencoded`, and it times out after 20 seconds. A field whose option is `undefined` is left out.
+
+| Field                  | Value                                                                      |
+| ---------------------- | -------------------------------------------------------------------------- |
+| `grant_type`           | `urn:ietf:params:oauth:grant-type:token-exchange`                          |
+| `subject_token`        | `subjectToken`                                                             |
+| `subject_token_type`   | `subjectTokenType`, else `urn:ietf:params:oauth:token-type:jwt`            |
+| `requested_token_type` | `requestedTokenType`, else `urn:ietf:params:oauth:token-type:access_token` |
+| `audience`             | `audience`                                                                 |
+| `resource`             | `resource`                                                                 |
+| `scope`                | `scope`                                                                    |
+| `client_id`            | `clientId`                                                                 |
+| `client_secret`        | `clientSecret`                                                             |
+| Other fields           | `parameters`                                                               |
+
+## Parameters
+
+### options.audience
+
+- **Type:** `string`
+- **Default:** `undefined`
+
+The RFC 8693 `audience` field: the logical name of the target service, such as the provider of Google STS. It is a field of the request, not the `aud` of the subject token.
+
+```ts
+// Names the workload identity provider of Google STS
+Exchange.request({
+  audience:
+    '//iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/ci/providers/github',
+  endpoint: 'https://sts.googleapis.com/v1/token',
+  subjectToken: subject.value,
+})
+```
+
+### options.clientId
+
+- **Type:** `string`
+- **Default:** `undefined`
+
+The OAuth client, sent as `client_id`, for servers that identify the client of the exchange. The [Better Auth plugin](/api/better-auth/token-exchange) refuses a `client_id` other than the client of the matched trust policy.
+
+```ts
+// The client that the trust policy names
+Exchange.request({ clientId: 'ci', endpoint, subjectToken: subject.value })
+```
+
+### options.clientSecret
+
+- **Type:** `string`
+- **Default:** `undefined`
+
+The client secret, sent as `client_secret`, for servers that require one.
+
+```ts
+// Reads the secret from an environment variable, never from argv
+Exchange.request({
+  clientId: 'ci',
+  clientSecret: process.env['EXAMPLE_CLIENT_SECRET'],
+  endpoint,
+  subjectToken: subject.value,
+})
+```
+
+### options.endpoint
+
+- **Type:** `string`
+
+The token endpoint. `request` reads no metadata, so [`Metadata.authorizationServer`](/api/core/metadata/authorization-server) supplies the endpoint of an issuer.
+
+```ts
+// The token endpoint of Server.create, at <issuer>/oauth2/token
+Exchange.request({ endpoint: 'https://auth.example.com/oauth2/token', subjectToken: subject.value })
+```
+
+### options.fetch
+
+- **Type:** `typeof globalThis.fetch`
+- **Default:** `globalThis.fetch`
+
+Sends the request.
+
+```ts
+// Sends the request through a fetch with a proxy or a test server
+Exchange.request({ endpoint, fetch: proxyFetch, subjectToken: subject.value })
+```
+
+### options.parameters
+
+- **Type:** `Readonly<Record<string, string>>`
+- **Default:** `undefined`
+
+Extra fields, such as `federation_policy_id` of OpenRouter. The request adds them after the optional fields, so a parameter replaces `audience`, `client_id`, `client_secret`, `requested_token_type`, `resource`, or `scope`. A parameter never replaces `grant_type`, `subject_token`, or `subject_token_type`.
+
+```ts
+// Names the federation policy that maps the subject token to an OpenRouter API key
+Exchange.request({
+  endpoint: 'https://openrouter.ai/api/v1/oauth/token',
+  parameters: { federation_policy_id: '<policy id>' },
+  subjectToken: subject.value,
+})
+```
+
+### options.requestedTokenType
+
+- **Type:** `string`
+- **Default:** `'urn:ietf:params:oauth:token-type:access_token'`
+
+The RFC 8693 `requested_token_type` field.
+
+```ts
+// Requests an access token, the default type
+Exchange.request({
+  endpoint,
+  requestedTokenType: 'urn:ietf:params:oauth:token-type:access_token',
+  subjectToken: subject.value,
+})
+```
+
+### options.resource
+
+- **Type:** `string`
+- **Default:** `undefined`
+
+The RFC 8707 resource of the access token. A server can refuse a resource that its trust policy does not allow, with `invalid_target`.
+
+```ts
+// Requests an access token for one API
+Exchange.request({ endpoint, resource: 'https://api.example.com', subjectToken: subject.value })
+```
+
+### options.scope
+
+- **Type:** `string`
+- **Default:** `undefined`
+
+Space-separated scopes. A trust policy can allow a subset of its scopes.
+
+```ts
+// Requests read access only
+Exchange.request({ endpoint, scope: 'data:read', subjectToken: subject.value })
+```
+
+### options.subjectExpiresAt
+
+- **Type:** `number`
+- **Default:** `undefined`
+
+When the subject token expires, in milliseconds since the epoch. The returned `expiresAt` is the earlier of this value and `expires_in` of the response. A response without `expires_in` expires with the subject token.
+
+```ts
+// Caps the lifetime of the access token at the lifetime of the subject token
+Exchange.request({ endpoint, subjectExpiresAt: subject.expiresAt, subjectToken: subject.value })
+```
+
+If the response has no `expires_in` and `subjectExpiresAt` is not set, `request` throws `Exchange.RejectedError` with `error: 'invalid_response'`.
+
+### options.subjectToken
+
+- **Type:** `string`
+
+The subject token, such as the OIDC token of GitHub Actions. It is sent as `subject_token`, and never appears in an error.
+
+```ts
+// The JWT that the platform signs for the running code
+Exchange.request({ endpoint, subjectToken: subject.value })
+```
+
+### options.subjectTokenType
+
+- **Type:** `string`
+- **Default:** `'urn:ietf:params:oauth:token-type:jwt'`
+
+The RFC 8693 `subject_token_type` field, one of the token types of RFC 8693 §3.
+
+```ts
+// Declares the subject token as an OpenID Connect ID token
+Exchange.request({
+  endpoint,
+  subjectToken: subject.value,
+  subjectTokenType: 'urn:ietf:params:oauth:token-type:id_token',
+})
+```
+
+## Returns
+
+- **Type:** `Promise<Exchange.Issued>`
+
+The access token of the response (RFC 8693 §2.2.1).
+
+### accessToken
+
+- **Type:** `string`
+
+The access token. Send it with `Authorization: Bearer`, and never log it.
+
+### expiresAt
+
+- **Type:** `number`
+
+When the access token expires, in milliseconds since the epoch: the time of the request plus `expires_in`, capped by `subjectExpiresAt`.
+
+### issuedAt
+
+- **Type:** `number`
+
+The time of the request, in milliseconds since the epoch. The cache margin of [`Grant.expiring`](/api/core/grant) derives from it.
+
+### issuedTokenType
+
+- **Type:** `string`
+
+`issued_token_type` of the response, else `urn:ietf:params:oauth:token-type:access_token`.
+
+### scope
+
+- **Type:** `string | undefined`
+
+Space-separated scopes of the access token. It is present only when the response has a `scope` that is not empty.
+
+## Errors
+
+- **`Exchange.RejectedError`:** The token endpoint returns an RFC 6749 §5.2 error, or a response with an `error` field. A response without an `access_token`, or without an expiry, throws it with `error: 'invalid_response'`. It holds `error`, `errorDescription`, and `status`.
+
+The steps of the error depend on `error`. An `invalid_grant` names the trust policy and the expiry of the subject token, and `invalid_target` names `resource`. A response with an error status and no `error` field reads as `server_error`. A network failure or the timeout rejects with the error of `fetch`.
+
+```ts
+import { Exchange } from 'handshakes'
+
+await Exchange.request({ endpoint, subjectToken: subject.value }).catch((error: unknown) => {
+  // [!code hl:2]
+  // No trust policy on the server matches the subject token
+  if (error instanceof Exchange.RejectedError && error.error === 'invalid_grant')
+    console.error(error.message)
+  else throw error
+})
+```
+
+## Types
+
+- **`Exchange.Issued`:** The access token, `expiresAt`, `issuedAt`, `issuedTokenType`, and `scope`.
+- **`Exchange.request.ErrorType`:** The errors of `request`.
+- **`Exchange.request.Options`:** The options of `request`.

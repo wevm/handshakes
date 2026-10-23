@@ -1,0 +1,37 @@
+import { Card, Cards } from 'vocs'
+
+# handshakes/test [A local OIDC issuer for integration tests]
+
+`handshakes/test` signs real subject tokens with the claims of a platform, and serves the endpoints that the platform sources call. So a source, a `Server`, or a `Resource` runs unchanged in a test, with no mocks and no stubbed globals. The entry uses `node:http` and `node:crypto`, so it runs in Node.
+
+```ts [Identity.test.ts]
+import { Identity } from 'handshakes'
+import { Issuer } from 'handshakes/test'
+
+const issuer = await Issuer.create()
+
+// Returns the environment of a GitHub Actions job with `id-token: write`
+const env = await issuer.env({ preset: 'githubActions' })
+const token = await Identity.token({ audience: 'https://auth.example.com', env })
+
+await issuer.close()
+```
+
+## Issuers
+
+<Cards>
+  <Card
+    title="Issuer.create"
+    description="Starts an issuer on a random local port, with the presets of five platforms."
+    icon="badge-check"
+    to="/api/test/issuer/create"
+  />
+</Cards>
+
+## Usage
+
+- **Sources:** Pass `issuer.env()` as the `env` of `Client.create` or `Identity.token`. The source requests its token from the issuer, as it does on the platform.
+- **Servers:** Set the `issuer` of a policy to `issuer.url`. `Server` and `Resource` fetch the keys of the issuer from its discovery document.
+- **Failures:** Sign a token with `issuer.sign()` and other claims, another audience, or a past expiry, to test a refusal.
+
+The [Testing](/guides/testing) guide shows complete test files.

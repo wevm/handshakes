@@ -1,0 +1,154 @@
+# Subject Tokens [Returns the OIDC token of the platform for APIs that accept it directly]
+
+## Overview
+
+A subject token is a JWT that the platform signs for the running code, such as the OIDC token of a GitHub Actions job. `Identity.token` returns this token with no exchange. Some APIs accept it directly, such as [Vercel AI Gateway](/guides/services/vercel-ai-gateway).
+
+Every request names an audience. The token must carry it as `aud`, so a token for one service never reaches another. The claims of the token are decoded on the client, but not verified. They serve logs and errors only.
+
+## Walkthrough
+
+### Detect the Platform
+
+`Identity.detect` returns the first source whose `detect` returns `true`. It reads environment variables only, and sends no request.
+
+```ts [detect.ts]
+import { Identity } from 'handshakes'
+
+// Returns the source of the platform, or `undefined` outside a supported platform.
+const source = Identity.detect()
+
+// `githubActions` in a GitHub Actions job.
+console.log(source?.name)
+```
+
+`Source.defaults` holds the sources below, in priority order. `Source.defaults` of `handshakes/node` adds `buildkite` before `gcp`.
+
+| Source                   | Detects                                                        | Audience                                   |
+| ------------------------ | -------------------------------------------------------------- | ------------------------------------------ |
+| `Source.vercel()`        | `VERCEL=1`, `VERCEL_OIDC_TOKEN`, or a Vercel Functions request | Any, through an exchange at Vercel         |
+| `Source.githubActions()` | `GITHUB_ACTIONS=true`                                          | Any                                        |
+| `Source.gitlab()`        | `GITLAB_CI=true`                                               | Fixed in `id_tokens` of `.gitlab-ci.yml`   |
+| `Source.circleci()`      | `CIRCLECI=true`                                                | Fixed: the ID of the CircleCI organization |
+| `Source.gcp()`           | `K_SERVICE`, set on Cloud Run and Cloud Functions              | Any                                        |
+
+### Request the Token
+
+`Identity.token` requests a token from the detected source for `audience`. Then it decodes the token, and checks that `aud` includes the audience.
+
+```ts [token.ts]
+import { Identity } from 'handshakes'
+
+// Returns the subject token, with `aud` equal to the audience.
+const token = await Identity.token({ audience: 'https://api.example.com' })
+
+// The source, such as `githubActions`, and the expiry in milliseconds since the epoch.
+console.log(token.source, token.expiresAt)
+```
+
+The result has `value`, the JWT. It also has `claims`, `expiresAt`, and `source`. Only `value` holds the token, so the other fields are safe in logs.
+
+### Failures
+
+A detected source that fails throws. The next source is never tried, since it can select a different identity.
+
+| Error                    | Thrown when                                                                          |
+| ------------------------ | ------------------------------------------------------------------------------------ |
+| `Identity.NotFoundError` | No source detects its platform. `checked` names each source, in order                |
+| `Source.RequestError`    | The detected source fails, such as a job without `permissions: id-token: write`      |
+| `Identity.AudienceError` | The token carries another `aud`, such as a GitLab token declared for another service |
+
+The `steps` of each error state the fix. A source with a fixed audience, such as GitLab, needs the audience in the configuration of the platform. The client cannot request another one.
+
+## Recipes
+
+### Direct API Access
+
+An API that verifies platform tokens itself needs no authorization server. The API uses `Resource` with trust policies, as the [Token Verification](/guides/token-verification) guide shows.
+
+```ts [request.ts]
+import { Identity } from 'handshakes'
+
+// The API verifies the platform token itself, so no exchange takes place.
+const token = await Identity.token({ audience: 'https://api.example.com' })
+
+const response = await fetch('https://api.example.com/v1/items', {
+  headers: { authorization: `Bearer ${token.value}` },
+})
+```
+
+This setup is the least work. But the API accepts the token for the full lifetime that the platform sets, and cannot narrow its scopes.
+
+### Token File
+
+`Source.file` of `handshakes/node` reads a token from a file, such as a Kubernetes projected service account token. It detects the platform when the file exists. The audience is fixed where the file is projected.
+
+```ts [token.ts]
+import { Identity } from 'handshakes'
+import { Source } from 'handshakes/node'
+
+// Reads the projected token, whose audience the pod spec fixes.
+const kubernetes = Source.file({ name: 'kubernetes', path: '/var/run/secrets/tokens/api-token' })
+
+const token = await Identity.token({
+  audience: 'https://api.example.com',
+  // Checks the file first, then the defaults of `handshakes/node`.
+  sources: [kubernetes, ...Source.defaults],
+})
+```
+
+### Custom Source
+
+`Source.from` types a source for another platform. Its `detect` reads `env` only. Its `token` returns a JWT for `context.audience`, or throws `Source.RequestError`.
+
+```ts [token.ts]
+import { Identity, Source } from 'handshakes'
+
+// A platform that writes its OIDC token to `EXAMPLE_OIDC_TOKEN`.
+const example = Source.from({
+  detect: (env) => env['EXAMPLE_CI'] === 'true',
+  name: 'example',
+  async token(context) {
+    const value = context.env['EXAMPLE_OIDC_TOKEN']
+    if (!value)
+      throw new Source.RequestError({
+        message: 'EXAMPLE_OIDC_TOKEN is not set.',
+        source: 'example',
+        steps: ['Turn on OIDC tokens for the job.'],
+      })
+    return value
+  },
+})
+
+const token = await Identity.token({ audience: 'https://api.example.com', sources: [example] })
+```
+
+### Compute Engine
+
+`Source.gcp` detects Cloud Run and Cloud Functions through `K_SERVICE`. Compute Engine and GKE set no variable to detect. On those hosts, override `detect` of the source.
+
+```ts [token.ts]
+import { Identity, Source } from 'handshakes'
+
+// Requests the token from the metadata server, on a host that sets no `K_SERVICE`.
+const gcp = Source.from({ ...Source.gcp(), detect: () => true })
+
+const token = await Identity.token({ audience: 'https://api.example.com', sources: [gcp] })
+```
+
+### CLI Output
+
+`handshakes token --audience` prints the subject token, for a shell or another tool. Without a detected source, it exits with code 3.
+
+```sh
+# Prints the OIDC token that the platform signs for this audience.
+handshakes token --audience https://api.example.com
+```
+
+## More
+
+- **Function:** [`Identity.token`](/api/core/identity/token) and [`Identity.detect`](/api/core/identity/detect) list every option.
+- **Sources:** [`Source`](/api/core/source) describes each platform source.
+- **Exchange:** [Token Exchange](/guides/token-exchange) trades the subject token for a short access token.
+- **Verification:** [Token Verification](/guides/token-verification) accepts platform tokens at an API.
+- **CLI:** [`handshakes token`](/cli/token) prints access tokens and subject tokens.

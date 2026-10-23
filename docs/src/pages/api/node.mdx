@@ -1,0 +1,90 @@
+import { Card, Cards } from 'vocs'
+
+# handshakes/node [Sources and stores that use the file system and child processes]
+
+`handshakes/node` holds the parts of the client that need Node built-ins, such as `fs` and `child_process`. The core entry has no such code, so it runs in Node, Bun, Deno, and edge runtimes.
+
+```ts [client.ts]
+import { Client } from 'handshakes'
+import { Source, Store } from 'handshakes/node'
+
+const client = Client.create({
+  clientId: 'example-cli',
+  issuer: 'https://auth.example.com',
+  // Adds Buildkite to the default sources of the core entry
+  sources: Source.defaults,
+  // Keeps the grant in a file that every process of the user shares
+  store: Store.file(),
+})
+```
+
+## Stores
+
+<Cards>
+  <Card
+    title="Store.file"
+    description="Writes each grant to a file with mode 0600, and locks refreshes across processes."
+    icon="file-lock"
+    to="/api/node/store/file"
+  />
+</Cards>
+
+:::note
+`Store.keychain`, a store in the system keychain, is not implemented. The macOS `security` command reads the secret from argv or a TTY prompt, and other processes of the user can read argv.
+:::
+
+## Sources
+
+<Cards>
+  <Card
+    title="Source.file"
+    description="Reads a subject token from a file, such as a Kubernetes service account token."
+    icon="file-key"
+    to="/api/node/source/file"
+  />
+  <Card
+    title="Source.buildkite"
+    description="Requests a subject token from the Buildkite agent for any audience."
+    icon="hammer"
+    to="/api/node/source/buildkite"
+  />
+</Cards>
+
+## Namespaces
+
+`Source` and `Store` of `handshakes/node` add to the namespaces of the same name in the core entry. They do not re-export the members of the core entry. A module that imports both renames one of them.
+
+```ts [client.ts]
+import { Client, Store } from 'handshakes'
+// The rename keeps both namespaces in one module
+import { Store as NodeStore } from 'handshakes/node'
+
+const store = process.env['CI'] ? Store.memory() : NodeStore.file()
+const client = Client.create({ issuer: 'https://auth.example.com', store })
+```
+
+## Default Sources
+
+`Source.defaults` of `handshakes/node` holds the sources of the core entry and `Source.buildkite`, in priority order. `gcp` stays last, as in the core entry. The first source that detects its platform supplies the subject token.
+
+| Priority | Source          | Detects                                             |
+| -------- | --------------- | --------------------------------------------------- |
+| 1        | `vercel`        | `VERCEL=1`, `VERCEL_OIDC_TOKEN`, or a request token |
+| 2        | `githubActions` | `GITHUB_ACTIONS=true`                               |
+| 3        | `gitlab`        | `GITLAB_CI=true`                                    |
+| 4        | `circleci`      | `CIRCLECI=true`                                     |
+| 5        | `buildkite`     | `BUILDKITE=true`                                    |
+| 6        | `gcp`           | `K_SERVICE`                                         |
+
+```ts [token.ts]
+import { Identity } from 'handshakes'
+import { Source } from 'handshakes/node'
+
+// Detects Buildkite too, which the core defaults do not
+const token = await Identity.token({
+  audience: 'https://auth.example.com',
+  sources: Source.defaults,
+})
+```
+
+`Source.file` is not in `Source.defaults`, since it needs a path. List it in `sources` explicitly.

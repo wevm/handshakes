@@ -1,0 +1,220 @@
+# Resource.create [Returns a verifier for the bearer tokens that one API receives]
+
+The verifier accepts two kinds of token: RFC 9068 access tokens of trusted authorization servers, and platform subject tokens that a trust policy accepts. It also returns the RFC 9728 metadata and the RFC 6750 challenge. Creating it sends no request.
+
+```ts [api.ts]
+import { Resource } from 'handshakes/server'
+
+const resource = Resource.create({
+  authorizationServers: ['https://auth.example.com'],
+  resource: 'https://api.example.com',
+})
+
+export default {
+  async fetch(request: Request) {
+    const url = new URL(request.url)
+    // RFC 9728 metadata names the authorization server, so clients discover it
+    if (url.href === resource.metadataUrl) return resource.metadata()
+
+    // Returns `401` with `WWW-Authenticate` for a missing or invalid token
+    const result = await resource.verify(request)
+    if (result.status === 'invalid') return resource.challenge(result)
+
+    return Response.json({ subject: result.principal.subject })
+  },
+}
+```
+
+If `Server` issues the credential of the host, such as an API key, the API checks that credential as before. It needs no `Resource`.
+
+## Signature
+
+```ts
+// A verifier for one API
+Resource.create(options)
+```
+
+## Parameters
+
+### options.authorizationServers
+
+- **Type:** `readonly string[]`
+- **Default:** `[]`
+
+The issuers whose RFC 9068 access tokens the API accepts. Their keys come from their discovery documents. A token whose `iss` is in this list must be an access token, so an issuer belongs either to this list or to `policies`.
+
+```ts
+// Accepts the access tokens of one Better Auth server
+Resource.create({
+  authorizationServers: ['https://auth.example.com'],
+  resource: 'https://api.example.com',
+})
+```
+
+### options.fetch
+
+- **Type:** `typeof globalThis.fetch`
+- **Default:** `globalThis.fetch`
+
+Sends the requests for the keys of issuers.
+
+```ts
+// Sends the key requests through a fetch with logs
+Resource.create({ fetch: loggedFetch, resource: 'https://api.example.com' })
+```
+
+### options.policies
+
+- **Type:** `readonly Policy.Policy[]`
+- **Default:** `[]`
+
+Trust policies for platform subject tokens that the API accepts without an exchange. The `audience` of each policy must equal `resource`, so a subject token for another API never passes.
+
+```ts
+import { Policy, Resource } from 'handshakes/server'
+
+// Accepts the GitHub Actions tokens of one repository directly
+Resource.create({
+  policies: [
+    Policy.githubActions({
+      audience: 'https://api.example.com',
+      repositoryId: '812345',
+      scopes: ['data:read'],
+    }),
+  ],
+  resource: 'https://api.example.com',
+})
+```
+
+The API then accepts a subject token for the full lifetime that the platform sets, and cannot narrow its scopes. An exchange at an authorization server can do both.
+
+### options.resource
+
+- **Type:** `string`
+
+The resource identifier of the API (RFC 9728 §1.2). Every accepted token carries it in `aud`, as an exact match. An authorization server that issues one `aud` for every API does not meet this, and needs RFC 8707 resources.
+
+```ts
+// Accepts only tokens with `aud: https://api.example.com`
+Resource.create({ authorizationServers, resource: 'https://api.example.com' })
+```
+
+### options.scopes
+
+- **Type:** `readonly string[]`
+- **Default:** `[]`
+
+The scopes that every request needs. A token without one of them receives `insufficient_scope`.
+
+```ts
+// Refuses tokens without `data:read`
+Resource.create({
+  authorizationServers,
+  resource: 'https://api.example.com',
+  scopes: ['data:read'],
+})
+```
+
+## Returns
+
+- **Type:** `Resource.Resource`
+
+### verify
+
+- **Type:** `(request: Request) => Promise<Resource.Valid | Resource.Invalid>`
+
+Verifies the bearer token in the `Authorization` header of the request. It returns `invalid` for a bad token, and never throws for one, including when the issuer serves no keys.
+
+```ts
+// Reads the subject of a valid token
+const result = await resource.verify(request)
+if (result.status === 'valid') console.log(result.principal.subject)
+```
+
+### challenge
+
+- **Type:** `(result: Resource.Invalid) => Response`
+
+Returns the RFC 6750 §3 challenge with an empty body. The status is `403` for `insufficient_scope`, else `401`. `WWW-Authenticate` names the metadata (RFC 9728 §5.1), the error code when one applies, and the required scopes when `scopes` is set.
+
+```http
+HTTP/1.1 401 Unauthorized
+WWW-Authenticate: Bearer resource_metadata="https://api.example.com/.well-known/oauth-protected-resource", error="invalid_token", scope="data:read"
+```
+
+### metadata
+
+- **Type:** `() => Response`
+
+Returns the RFC 9728 metadata. Serve it at `metadataUrl`. `scopes_supported` holds `scopes` and the scopes of every policy.
+
+```json
+{
+  "authorization_servers": ["https://auth.example.com"],
+  "bearer_methods_supported": ["header"],
+  "resource": "https://api.example.com",
+  "scopes_supported": ["data:read"]
+}
+```
+
+`authorization_servers` and `scopes_supported` are absent when they are empty.
+
+### metadataUrl
+
+- **Type:** `string`
+
+The URL of the metadata. RFC 9728 §3.1 inserts the well-known suffix before the path of the resource.
+
+| Resource                  | metadataUrl                                                    |
+| ------------------------- | -------------------------------------------------------------- |
+| `https://api.example.com` | `https://api.example.com/.well-known/oauth-protected-resource` |
+| `https://example.com/api` | `https://example.com/.well-known/oauth-protected-resource/api` |
+
+```ts
+// Serves the metadata at its well-known URL
+if (request.url === resource.metadataUrl) return resource.metadata()
+```
+
+## Verification
+
+`verify` reads the `iss` of the token first, without trust, to select the rules:
+
+- **Access token:** `iss` is in `authorizationServers`. The header needs `typ: at+jwt` (RFC 9068 §2.1), so an ID token signed with the same key does not pass. The signature, `exp`, `nbf` with 60 seconds of leeway, and an exact `aud` must pass. The scopes come from the `scope` claim.
+- **Subject token:** `iss` is another issuer. A policy must match the token, as `Server` matches it, with the `exp` of the token as the only limit. The scopes are the scopes of the policy.
+
+Then each scope of `options.scopes` must be in the scopes of the token.
+
+| Request                                | `error`                | Status |
+| -------------------------------------- | ---------------------- | ------ |
+| No `Authorization` header              | absent (RFC 6750 §3.1) | `401`  |
+| A header that is not `Bearer <token>`  | `invalid_request`      | `401`  |
+| A token that fails verification        | `invalid_token`        | `401`  |
+| A valid token without a required scope | `insufficient_scope`   | `403`  |
+
+## Types
+
+- **`Resource.Valid`:** `{ principal, status: 'valid' }`.
+- **`Resource.Invalid`:** `{ error?, status: 'invalid' }`. `error` is `insufficient_scope`, `invalid_request`, or `invalid_token`, and is absent when the request has no credentials.
+- **`Resource.Principal`:** The verified caller.
+
+`Resource.Principal` holds these fields:
+
+- **`claims`:** The verified claims of the token.
+- **`expiresAt`:** When the token expires, in milliseconds since the epoch.
+- **`issuer`:** The `iss` of the token.
+- **`policy`:** The policy that accepted a subject token. Absent for an access token.
+- **`scopes`:** The scopes of the token. For a subject token, the scopes of the policy.
+- **`subject`:** The `sub` of the token, else an empty string.
+
+```ts
+import type { Resource } from 'handshakes/server'
+
+// Logs the caller of each request, for an audit trail
+function log(principal: Resource.Principal) {
+  console.log(principal.issuer, principal.subject, principal.scopes.join(' '))
+}
+```
+
+## Errors
+
+- **`TypeError`:** A policy has an `audience` other than `resource`, or a policy has no claims. `Resource.create` throws it, not `verify`.

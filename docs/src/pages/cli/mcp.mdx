@@ -1,0 +1,67 @@
+# MCP [Serves requests and status to an agent, and never a token]
+
+`handshakes --mcp` starts the CLI as a Model Context Protocol (MCP) server on stdio. An agent then sends requests to an API through the server, and the access token stays out of the context of the model.
+
+```sh
+# Registers the CLI as an MCP server for the agents on this device
+handshakes mcp add
+```
+
+## Tools
+
+The server serves two tools, `fetch` and `status`.
+
+| Tool                    | Input                                                | Output                                    |
+| ----------------------- | ---------------------------------------------------- | ----------------------------------------- |
+| [`fetch`](/cli/fetch)   | `profile`, `url`, `method`, `header`, `data`, `fail` | `status`, `headers`, and `body`           |
+| [`status`](/cli/status) | `profile`, `clientId`, `issuer`, `resource`, `scope` | The detected source, and the stored grant |
+
+There is no `token` tool and no `exec` tool. A token in the context of a model can reach a log, a transcript, or another tool. The `fetch` tool sends the token itself, and returns only the response.
+
+## Fetch Limits
+
+Under `--mcp`, the `fetch` tool accepts fewer inputs than the `fetch` command:
+
+- **No profile overrides:** The tool takes no `issuer`, `resource`, `clientId`, or `scope`. A prompt cannot direct a token to another server or widen its scopes.
+- **No files:** `data` is the request body itself. The tool never reads `@file`, so a prompt cannot read a local file.
+
+The origin and resource checks of the [`fetch`](/cli/fetch) command still apply. Without a profile, the tool discovers the authorization server from the RFC 9728 metadata of the API.
+
+## Register
+
+`handshakes mcp add` writes the server into the configuration of each coding agent on the device, through the `add-mcp` package. Each agent then starts `handshakes --mcp` itself.
+
+```sh
+# Registers the server for one agent, in the project only
+handshakes mcp add --agent claude-code --no-global
+```
+
+| Option                   | Description                                                              |
+| ------------------------ | ------------------------------------------------------------------------ |
+| `--agent <string>`       | Targets one agent, such as `claude-code` or `cursor`.                    |
+| `--command, -c <string>` | Replaces the command that agents run, such as `"pnpm handshakes --mcp"`. |
+| `--no-global`            | Installs into the project instead of the user configuration.             |
+
+`handshakes mcp doctor` starts the server and checks that it lists its tools.
+
+```sh
+# Checks the startup and the tool list of the server
+handshakes mcp doctor
+```
+
+## Manual Setup
+
+An agent that reads a JSON configuration starts the server with the `--mcp` flag.
+
+```json [.mcp.json]
+{
+  "mcpServers": {
+    "handshakes": {
+      "args": ["--mcp"],
+      "command": "handshakes"
+    }
+  }
+}
+```
+
+The server reads the same [configuration](/cli/configuration) and grants as the CLI. A server on stdio has no terminal for the device grant. So on a device, run [`handshakes authorize`](/cli/authorize) once before an agent calls `fetch`.

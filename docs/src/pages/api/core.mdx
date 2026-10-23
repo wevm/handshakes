@@ -1,0 +1,142 @@
+import { Card, Cards } from 'vocs'
+
+# handshakes [The OAuth client for workloads and CLIs]
+
+The `handshakes` entry returns access tokens for an API. It exchanges the OIDC token of a platform (RFC 8693), or runs and refreshes a device grant (RFC 8628). It also exports the standard requests that the client sends, for custom flows.
+
+```ts [example.ts]
+import { Client } from 'handshakes'
+
+// Exchanges the platform token in CI, or uses the stored grant on a device
+const client = Client.create({ issuer: 'https://auth.example.com', scope: 'data:read' })
+
+const response = await client.fetch('https://api.example.com/v1/items')
+```
+
+## Installation
+
+:::code-group
+
+```sh [pnpm]
+# Installs the package with pnpm
+pnpm add handshakes
+```
+
+```sh [npm]
+# Installs the package with npm
+npm install handshakes
+```
+
+```sh [bun]
+# Installs the package with Bun
+bun add handshakes
+```
+
+:::
+
+:::note
+The entry has no dependencies and imports no Node built-ins, so it runs in Node, Bun, Deno, and edge runtimes. File system code, such as the file store, lives in [`handshakes/node`](/api/node).
+:::
+
+## Clients
+
+<Cards>
+  <Card
+    title="Client.create"
+    description="Returns a client that resolves, caches, and attaches access tokens for one API."
+    icon="key-round"
+    to="/api/core/client/create"
+  />
+  <Card
+    title="Client.discover"
+    description="Reads the RFC 9728 metadata of an API, then returns a client for its authorization server."
+    icon="radar"
+    to="/api/core/client/discover"
+  />
+</Cards>
+
+## Subject Tokens
+
+<Cards>
+  <Card
+    title="Identity.token"
+    description="Returns the OIDC token that the platform signs for the running code."
+    icon="fingerprint"
+    to="/api/core/identity/token"
+  />
+  <Card
+    title="Identity.detect"
+    description="Returns the first source that detects its platform, from environment variables only."
+    icon="scan-search"
+    to="/api/core/identity/detect"
+  />
+</Cards>
+
+## Requests
+
+<Cards>
+  <Card
+    title="DeviceGrant.start"
+    description="Requests a device code (RFC 8628), and polls the token endpoint until approval."
+    icon="monitor-smartphone"
+    to="/api/core/device-grant/start"
+  />
+  <Card
+    title="Exchange.request"
+    description="Exchanges a subject token for an access token at a token endpoint (RFC 8693)."
+    icon="arrow-left-right"
+    to="/api/core/exchange/request"
+  />
+</Cards>
+
+## Discovery
+
+<Cards>
+  <Card
+    title="Metadata.authorizationServer"
+    description="Returns the endpoints of an authorization server (RFC 8414)."
+    icon="server"
+    to="/api/core/metadata/authorization-server"
+  />
+  <Card
+    title="Metadata.protectedResource"
+    description="Returns the metadata of a protected resource (RFC 9728)."
+    icon="shield"
+    to="/api/core/metadata/protected-resource"
+  />
+  <Card
+    title="Metadata.challenge"
+    description="Returns the parameters of the Bearer challenge of a response."
+    icon="shield-alert"
+    to="/api/core/metadata/challenge"
+  />
+</Cards>
+
+## Namespaces
+
+<Cards>
+  <Card
+    title="Source"
+    description="The platforms that sign an OIDC token for the running code, and the default order."
+    icon="cloud"
+    to="/api/core/source"
+  />
+  <Card
+    title="Store"
+    description="Persistence of grants, with a lock that serializes refreshes."
+    icon="database"
+    to="/api/core/store"
+  />
+  <Card
+    title="Grant"
+    description="The stored access token and refresh token, its store key, and its expiry rule."
+    icon="ticket"
+    to="/api/core/grant"
+  />
+  <Card
+    title="Errors"
+    description="Every error that the entries throw, with the steps that resolve it."
+    icon="triangle-alert"
+    to="/api/core/errors"
+  />
+</Cards>

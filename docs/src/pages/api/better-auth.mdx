@@ -1,0 +1,48 @@
+import { Card, Cards } from 'vocs'
+
+# handshakes/better-auth [The token exchange as a plugin of the Better Auth OAuth provider]
+
+`handshakes/better-auth` adds the RFC 8693 token exchange to [`@better-auth/oauth-provider`](https://www.better-auth.com/docs/plugins/oauth-provider) through `extendOAuthProvider`. It verifies subject tokens as `Server` does, and Better Auth issues the access tokens. It extends Better Auth, and replaces no Better Auth feature.
+
+```ts [auth.ts]
+import { oauthProvider } from '@better-auth/oauth-provider'
+import { betterAuth } from 'better-auth'
+import { jwt } from 'better-auth/plugins/jwt'
+import { tokenExchange } from 'handshakes/better-auth'
+
+export const auth = betterAuth({
+  plugins: [
+    jwt(),
+    oauthProvider({ consentPage: '/consent', loginPage: '/login', m2mAccessTokenExpiresIn: 240 }),
+    // Adds the token exchange grant to the token endpoint of the provider
+    tokenExchange(),
+  ],
+})
+```
+
+## Plugins
+
+<Cards>
+  <Card
+    title="tokenExchange"
+    description="Returns the plugin that adds the token exchange grant and the trust policy table."
+    icon="arrow-left-right"
+    to="/api/better-auth/token-exchange"
+  />
+</Cards>
+
+## Peer Dependencies
+
+`better-auth` and `@better-auth/oauth-provider` are optional peers of `handshakes`. Only a module that imports `handshakes/better-auth` needs them. The tests of this repository run against the versions below.
+
+| Package                       | Version  |
+| ----------------------------- | -------- |
+| `better-auth`                 | `1.7.12` |
+| `@better-auth/oauth-provider` | `1.7.12` |
+
+```sh
+# Installs the plugin with the peers that it needs
+pnpm add handshakes better-auth @better-auth/oauth-provider
+```
+
+`extendOAuthProvider` is new in `@better-auth/oauth-provider`. Pin the version, and run the plugin tests after each upgrade.

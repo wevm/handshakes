@@ -1,0 +1,89 @@
+import { Card, Cards } from 'vocs'
+
+# handshakes/server [The token exchange endpoint, trust policies, and token verification for an API]
+
+`handshakes/server` holds the server side of the handshake. Each part is framework-neutral: a fetch handler, or a function of a `Request`. The entry has no dependencies and no Node built-ins, so it runs in Node, Bun, Deno, and edge runtimes.
+
+```ts [server.ts]
+import { Policy, Server } from 'handshakes/server'
+
+const server = Server.create({
+  // Mints the credential, such as an API key, through the key service of the host
+  issue: async (context) => ({
+    accessToken: await keys.mint({ expiresAt: context.expiresAt, scopes: context.scopes }),
+    expiresAt: context.expiresAt,
+  }),
+  issuer: 'https://auth.example.com',
+  policies: [
+    Policy.githubActions({
+      audience: 'https://auth.example.com',
+      repositoryId: '812345',
+      scopes: ['data:read'],
+    }),
+  ],
+})
+
+export default { fetch: server.fetch }
+```
+
+## Roles
+
+| Export     | Role                                                                                            |
+| ---------- | ----------------------------------------------------------------------------------------------- |
+| `Server`   | The RFC 8693 token endpoint and its RFC 8414 metadata. The host issues the credential.          |
+| `Resource` | Verification of the tokens that an API receives, the RFC 9728 metadata, and the `401` challenge |
+| `Policy`   | Trust policies that map the issuer and claims of a subject token to scopes and a lifetime       |
+
+## Endpoints
+
+<Cards>
+  <Card
+    title="Server.create"
+    description="Returns the RFC 8693 token endpoint as a fetch handler."
+    icon="server"
+    to="/api/server/server/create"
+  />
+  <Card
+    title="Resource.create"
+    description="Returns a verifier for the bearer tokens that one API receives."
+    icon="shield-check"
+    to="/api/server/resource/create"
+  />
+</Cards>
+
+## Policies
+
+<Cards>
+  <Card
+    title="Policy"
+    description="Trust policies for GitHub Actions, Vercel, and custom issuers."
+    icon="scroll-text"
+    to="/api/server/policy"
+  />
+</Cards>
+
+## Verification
+
+`Server` and `Resource` verify JWT signatures with WebCrypto. They accept these algorithms only:
+
+- **RS256:** RSASSA-PKCS1-v1_5 with SHA-256.
+- **ES256:** ECDSA with P-256 and SHA-256.
+- **EdDSA:** Ed25519 only (RFC 8037), as Better Auth signs by default.
+
+`none` and HMAC algorithms never pass. `iss` and `aud` match exactly. The keys of an issuer come from `jwks_uri` of its OpenID Connect discovery document, else from `<issuer>/.well-known/jwks`.
+
+- **Cache:** A key set stays cached for 10 minutes. A token with an unknown `kid` reloads the keys at most once a minute.
+- **Failures:** A key request times out after 10 seconds. A failed request caches an empty key set for a minute, so bad tokens cannot flood the issuer.
+- **Scope:** The server contacts only issuers that a policy names, so a token cannot direct requests to another host.
+
+```ts [api.ts]
+import { Resource } from 'handshakes/server'
+
+// Fetches the keys of each issuer once, then caches them for the instance
+const resource = Resource.create({
+  authorizationServers: ['https://auth.example.com'],
+  resource: 'https://api.example.com',
+})
+```
+
+The Better Auth adapter, [`tokenExchange`](/api/better-auth/token-exchange), uses the same verification and the same `Policy` type.
