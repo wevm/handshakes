@@ -42,6 +42,11 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./better-auth": {
+      "src": "./src/better-auth/index.ts",
+      "types": "./dist/better-auth/index.d.ts",
+      "default": "./dist/better-auth/index.js"
+    },
     "./node": {
       "src": "./src/node/index.ts",
       "types": "./dist/node/index.d.ts",
@@ -51,11 +56,6 @@
       "src": "./src/server/index.ts",
       "types": "./dist/server/index.d.ts",
       "default": "./dist/server/index.js"
-    },
-    "./server/better-auth": {
-      "src": "./src/server/better-auth/index.ts",
-      "types": "./dist/server/better-auth/index.d.ts",
-      "default": "./dist/server/better-auth/index.js"
     },
     "./test": {
       "src": "./src/test/index.ts",

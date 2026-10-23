@@ -6,7 +6,7 @@ Handshakes is an OAuth client library and CLI that replaces stored API keys with
 
 - In CI and on servers, it exchanges the platform's OIDC token for an access token ([RFC 8693](https://www.rfc-editor.org/rfc/rfc8693)).
 - On a laptop, it runs the device authorization grant ([RFC 8628](https://www.rfc-editor.org/rfc/rfc8628)) and refreshes the grant.
-- `handshakes/server` serves the token exchange as a fetch handler, and verifies access tokens for an API. `handshakes/server/better-auth` adds the same exchange to a [Better Auth](https://www.better-auth.com) authorization server. Both sides of the handshake ship and test together.
+- `handshakes/server` serves the token exchange as a fetch handler, and verifies access tokens for an API. `handshakes/better-auth` adds the same exchange to a [Better Auth](https://www.better-auth.com) authorization server. Both sides of the handshake ship and test together.
 
 The client calls only standard OAuth endpoints, so it works with any authorization server that implements them, such as Better Auth, Google, or OpenRouter. The server entry implements only the token exchange endpoint and token verification. The host issues the credential.
 
@@ -40,11 +40,11 @@ sequenceDiagram
   API-->>C: 5. Response, or 401 with resource_metadata
 ```
 
-| Role                 | Entry                                                              | Responsibility                                                                                      |
-| -------------------- | ------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------- |
-| Client               | `handshakes`, `handshakes/node`, the CLI                           | Detect the subject token or run the device grant, exchange or refresh, cache, and attach the token  |
-| Authorization server | `handshakes/server` (`Server`), or `handshakes/server/better-auth` | Verify the subject token, match a policy, and return the credential that the host issues            |
-| API                  | `handshakes/server` (`Resource`)                                   | Verify the access token or a subject token, serve RFC 9728 metadata, and return the `401` challenge |
+| Role                 | Entry                                                       | Responsibility                                                                                      |
+| -------------------- | ----------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| Client               | `handshakes`, `handshakes/node`, the CLI                    | Detect the subject token or run the device grant, exchange or refresh, cache, and attach the token  |
+| Authorization server | `handshakes/server` (`Server`), or `handshakes/better-auth` | Verify the subject token, match a policy, and return the credential that the host issues            |
+| API                  | `handshakes/server` (`Resource`)                            | Verify the access token or a subject token, serve RFC 9728 metadata, and return the `401` challenge |
 
 An API can take one of three setups:
 
@@ -135,14 +135,14 @@ Only steps 1 to 3 change between platforms.
 
 One package, `handshakes`, with five entries and a bin.
 
-| Entry                           | Contents                                                                       |
-| ------------------------------- | ------------------------------------------------------------------------------ |
-| `handshakes`                    | `Client`, `DeviceGrant`, `Exchange`, `Identity`, `Metadata`, `Source`, `Store` |
-| `handshakes/server`             | `Policy`, `Resource`, `Server`                                                 |
-| `handshakes/server/better-auth` | `tokenExchange`                                                                |
-| `handshakes/node`               | `NodeSource`, and `Store` with `file` and `keychain`                           |
-| `handshakes/test`               | `Issuer`                                                                       |
-| bin `handshakes`                | The CLI                                                                        |
+| Entry                    | Contents                                                                       |
+| ------------------------ | ------------------------------------------------------------------------------ |
+| `handshakes`             | `Client`, `DeviceGrant`, `Exchange`, `Identity`, `Metadata`, `Source`, `Store` |
+| `handshakes/server`      | `Policy`, `Resource`, `Server`                                                 |
+| `handshakes/better-auth` | `tokenExchange`                                                                |
+| `handshakes/node`        | `NodeSource`, and `Store` with `file` and `keychain`                           |
+| `handshakes/test`        | `Issuer`                                                                       |
+| bin `handshakes`         | The CLI                                                                        |
 
 - The core entry has no dependencies. It runs in Node, Bun, Deno, and edge runtimes.
 - `handshakes/node` uses `fs` and child processes.
@@ -655,7 +655,7 @@ type Policy = {
 - `Policy.from(policy)` types a custom policy.
 - Verification accepts RS256 and ES256 only, an exact `iss`, and an exact `aud`. It has no single-use `jti` rule, since Vercel reuses one subject token for up to 90 minutes.
 
-### `handshakes/server/better-auth`
+### `handshakes/better-auth`
 
 Adds the same exchange to `@better-auth/oauth-provider` through `extendOAuthProvider`. `issue` calls `provider.issueTokens`, so the client receives Better Auth access tokens.
 
@@ -663,7 +663,7 @@ Adds the same exchange to `@better-auth/oauth-provider` through `extendOAuthProv
 import { betterAuth } from 'better-auth'
 import { oauthProvider } from '@better-auth/oauth-provider'
 import { Policy } from 'handshakes/server'
-import { tokenExchange } from 'handshakes/server/better-auth'
+import { tokenExchange } from 'handshakes/better-auth'
 
 export const auth = betterAuth({
   plugins: [
@@ -819,15 +819,15 @@ There is no `token` tool, so a token never enters the context of a model.
 
 No mocks, stubs, or stubbed globals. Every test runs against a real server or a real platform.
 
-| Layer                         | Real counterpart                                                                                                                        |
-| ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| Sources                       | `handshakes/test` issuer with `issuer.env()`, and a GitHub Actions job with `id-token: write`                                           |
-| Device grant, refresh, revoke | A local Better Auth server: memory adapter, `oauthProvider`, `oauthDeviceAuthorization`, and `jwt`                                      |
-| Exchange                      | `Server` behind a local HTTP server, and the local Better Auth server with `handshakes/server/better-auth`, both fed by the test issuer |
-| Resource                      | `Resource` against tokens of the local Better Auth server and of the test issuer                                                        |
-| Interoperability              | Google STS from GitHub Actions in CI. Google OAuth by hand. OpenRouter when a Business plan is available                                |
-| Races                         | Several processes that share one `Store.file`                                                                                           |
-| CLI                           | The built bin against the local server                                                                                                  |
+| Layer                         | Real counterpart                                                                                                                 |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| Sources                       | `handshakes/test` issuer with `issuer.env()`, and a GitHub Actions job with `id-token: write`                                    |
+| Device grant, refresh, revoke | A local Better Auth server: memory adapter, `oauthProvider`, `oauthDeviceAuthorization`, and `jwt`                               |
+| Exchange                      | `Server` behind a local HTTP server, and the local Better Auth server with `handshakes/better-auth`, both fed by the test issuer |
+| Resource                      | `Resource` against tokens of the local Better Auth server and of the test issuer                                                 |
+| Interoperability              | Google STS from GitHub Actions in CI. Google OAuth by hand. OpenRouter when a Business plan is available                         |
+| Races                         | Several processes that share one `Store.file`                                                                                    |
+| CLI                           | The built bin against the local server                                                                                           |
 
 `test/Server.ts` starts the local Better Auth server on a random port. A test approves a user code through the server's own approval endpoint, as a signed-in test user.
 
@@ -885,7 +885,7 @@ Server, `handshakes/server`:
 - JWKS fetch and cache, RS256 and ES256 with WebCrypto, exact `iss` and `aud`, and a lifetime that ends no later than the subject token.
 - `Policy.githubActions`, `Policy.vercel`, and `Policy.from`.
 
-Server, `handshakes/server/better-auth`:
+Server, `handshakes/better-auth`:
 
 - `tokenExchange`, the `trustPolicy` table, and its endpoints.
 
@@ -914,7 +914,7 @@ Done when `handshakes fetch` works without a profile against an API that uses `R
 - A security review: token values in errors and logs, file permissions, and the env of `exec`.
 - Docs: one guide for each platform, and examples for AI Gateway, OpenRouter, and Google STS.
 - API freeze, and 1.0 through Changesets.
-- A proposal of `handshakes/server/better-auth` to Better Auth.
+- A proposal of `handshakes/better-auth` to Better Auth.
 
 ## Test targets
 
@@ -929,7 +929,7 @@ Done when `handshakes fetch` works without a profile against an API that uses `R
 ## Risks and open questions
 
 - `extendOAuthProvider` is new in `@better-auth/oauth-provider`. Pin the version, and run the plugin tests on every upgrade.
-- `handshakes/server/better-auth` can stay here or move to Better Auth after 1.0.
+- `handshakes/better-auth` can stay here or move to Better Auth after 1.0.
 - File locks behave differently on Windows. Test the lock method there before phase 2 ends.
 - `Source.vercel` depends on `@vercel/oidc` for other audiences. Own the request later if the peer becomes a problem.
 - `exec` puts the token in the environment of the child, which other processes of the same user can read. This is acceptable for a token that expires in minutes.

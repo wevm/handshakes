@@ -12,7 +12,7 @@ Source commit: `0b589ec34481856b4153526f10a0a35558a201a8`. Retrieved 2026-10-23.
 - The client calls only standard endpoints (RFC 8414, 8628, 6749 refresh, 7009, 8693, 8707, 9728) and uses their terms: `authorize`, `revoke`, grant, subject token, issuer, resource.
 - `Server` implements only the RFC 8693 token endpoint and its metadata, as a fetch handler. The host issues the credential through `issue`. `Server` stores no tokens and runs no device grant, consent, or client registration.
 - `Resource` verifies the tokens that an API receives, and serves RFC 9728 metadata and the `401` challenge.
-- `handshakes/server/better-auth` adapts `Server` to `@better-auth/oauth-provider` through `extendOAuthProvider`. It extends Better Auth and never replaces a Better Auth feature.
+- `handshakes/better-auth` adapts `Server` to `@better-auth/oauth-provider` through `extendOAuthProvider`. It extends Better Auth and never replaces a Better Auth feature.
 - `Client` and the CLI resolve an access token in one order: a cached token, an exchange of a detected subject token, a refresh of a stored grant, an interactive device grant, then `Client.AuthorizationRequiredError`. Change this order only in `.agent/plans/handshakes.md` first.
 - A detected source that fails throws. Never fall through to the next source, since that can select a different identity.
 - Keep `handshakes` and `handshakes/server` free of dependencies and of Node built-ins, so they run in Node, Bun, Deno, and edge runtimes. Verify signatures with WebCrypto. File system and child process code lives in `handshakes/node`.
@@ -198,7 +198,7 @@ Applies to documentation, comments, TSDoc, interface copy, commit messages, and 
 ## Repository Layout
 
 - `src/`: flat PascalCase modules of the core entry, with colocated tests. `src/index.ts` re-exports them as namespaces.
-- `src/node/`, `src/server/`, `src/server/better-auth/`, `src/test/`: the `handshakes/node`, `handshakes/server`, `handshakes/server/better-auth`, and `handshakes/test` entries.
+- `src/better-auth/`, `src/node/`, `src/server/`, `src/test/`: the `handshakes/better-auth`, `handshakes/node`, `handshakes/server`, and `handshakes/test` entries.
 - `src/cli/`: the incur CLI. `bin.ts` is the entry, and each command lives in its own file.
 - `src/internal/`: helpers that no entry exports.
 - `test/`: the shared harness, such as `test/Server.ts`.

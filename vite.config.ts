@@ -6,8 +6,8 @@ export default defineConfig({
     // Longer specifiers come first, since the bare `handshakes` pattern is anchored.
     alias: [
       {
-        find: 'handshakes/server/better-auth',
-        replacement: Path.resolve(import.meta.dirname, 'src/server/better-auth/index.ts'),
+        find: 'handshakes/better-auth',
+        replacement: Path.resolve(import.meta.dirname, 'src/better-auth/index.ts'),
       },
       {
         find: 'handshakes/server',
