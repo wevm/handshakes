@@ -110,7 +110,7 @@ Client.create({
 - **Type:** `boolean`
 - **Default:** `true` when stdin is a TTY and `CI` is not set, else `false`
 
-Whether `token` runs the device grant when no source detects and no stored grant applies. Without it, `token` throws `Client.AuthorizationRequiredError`. `status` reports `false` unless this option is set.
+Whether `token` runs the device grant when no source detects and no stored grant applies. Without it, `token` throws `Client.AuthorizationRequiredError`. `status` reports the same value, also when the default applies.
 
 ```ts
 // Never prompts, also in a terminal

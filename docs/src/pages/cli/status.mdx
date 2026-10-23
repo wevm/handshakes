@@ -61,7 +61,7 @@ handshakes status example --client-id example-cli
 ### --interactive
 
 - **Type:** `boolean`
-- **Default:** `false`
+- **Default:** `true` when stdin is a terminal and `CI` is not set
 
 Sets the `interactive` option of the client, which the `none` form of `grant` reports. `status` itself never runs the device grant.
 
@@ -128,13 +128,13 @@ handshakes status --source githubActions --source vercel
 
 The `grant` field takes one of three forms:
 
-| `method`   | Applies when                   | Other fields                                                                                    |
-| ---------- | ------------------------------ | ----------------------------------------------------------------------------------------------- |
-| `exchange` | A source detects its platform. | `source`, the name of the source.                                                               |
-| `grant`    | A grant is stored.             | `expiresAt`, `refreshable`, and `subject`, the `sub` of the access token when it is a JWT.      |
-| `none`     | No source and no grant apply.  | `checked`, the names of the sources, and `interactive`, the `interactive` option of the client. |
+| `method`   | Applies when                   | Other fields                                                                                   |
+| ---------- | ------------------------------ | ---------------------------------------------------------------------------------------------- |
+| `exchange` | A source detects its platform. | `source`, the name of the source.                                                              |
+| `grant`    | A grant is stored.             | `expiresAt`, `refreshable`, and `subject`, the `sub` of the access token when it is a JWT.     |
+| `none`     | No source and no grant apply.  | `checked`, the names of the sources, and `interactive`, whether `token` runs the device grant. |
 
-Without `--interactive`, `interactive` reads `false`, also in a terminal. In a terminal without `CI`, [`token`](/cli/token), [`exec`](/cli/exec), and [`fetch`](/cli/fetch) still run the device grant.
+Without `--interactive`, `interactive` is `true` when stdin is a terminal and `CI` is not set. Under the same condition, [`token`](/cli/token), [`exec`](/cli/exec), and [`fetch`](/cli/fetch) run the device grant.
 
 `status` sends no request, so it takes no `--client-secret-env`.
 
