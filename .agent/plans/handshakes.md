@@ -287,7 +287,7 @@ type Source = {
 | `Source.githubActions()` | `GITHUB_ACTIONS`              | `GET` `ACTIONS_ID_TOKEN_REQUEST_URL` with `audience`, and the request token                                                            | Any                                      |
 | `Source.gitlab()`        | `GITLAB_CI`                   | Reads `<AUD>_ID_TOKEN`, or the `variable` option                                                                                       | Fixed in `id_tokens` of `.gitlab-ci.yml` |
 | `Source.circleci()`      | `CIRCLECI`                    | Reads `CIRCLE_OIDC_TOKEN_V2`                                                                                                           | Fixed                                    |
-| `Source.gcp()`           | `K_SERVICE`                   | Metadata server, `…/service-accounts/default/identity?audience=`                                                                       | Any                                      |
+| `Source.gcp()`           | `K_SERVICE` (`detect` option) | Metadata server, `…/service-accounts/default/identity?audience=`                                                                       | Any                                      |
 | `Source.buildkite()`     | `BUILDKITE`                   | `buildkite-agent oidc request-token --audience`                                                                                        | Any                                      |
 | `Source.file()`          | The file exists               | Reads a projected token, such as a Kubernetes service account token                                                                    | Fixed in the pod spec                    |
 
@@ -297,7 +297,7 @@ type Source = {
 - For a source with a fixed audience, the client decodes the token and compares `aud` with the requested audience. A mismatch throws `Identity.AudienceError`, and the token is not sent.
 - `Source.vercel` returns the token without an exchange when its `aud` already matches, such as `https://vercel.com/<team>` for AI Gateway. It implements the request header and the audience exchange itself, with no `@vercel/oidc` peer, so `env` and `fetch` stay injectable. The token file (`VERCEL_OIDC_TOKEN_FILE`) is left for `handshakes/node`.
 - `Source.Env` is the type of `env`. `Identity.token` reads `process.env` only when the runtime has one.
-- Compute Engine and GKE set no variable to detect. List `Source.gcp()` explicitly there.
+- Compute Engine and GKE set no variable to detect. On these platforms, list `Source.gcp({ detect: 'always' })` last in `sources`. This source detects on every platform, and a detected source that fails throws. The `gcp` of `Source.defaults` detects `K_SERVICE` only, so the default list never selects Google Cloud elsewhere.
 
 ### `Store`
 

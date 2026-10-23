@@ -82,13 +82,13 @@ export function from(source: Source): Source {
 /**
  * Google Cloud. Requests an identity token from the metadata server, for any audience.
  * Detects Cloud Run and Cloud Functions through `K_SERVICE`. Compute Engine and GKE set no
- * variable, so list `Source.gcp()` explicitly there.
+ * variable, so list `Source.gcp({ detect: 'always' })` last in `sources` there.
  */
 export function gcp(options: gcp.Options = {}): Source {
   const name = 'gcp'
 
   return {
-    detect: (env) => env['K_SERVICE'] !== undefined,
+    detect: (env) => options.detect === 'always' || env['K_SERVICE'] !== undefined,
     name,
     async token(context) {
       const host =
@@ -109,6 +109,12 @@ export function gcp(options: gcp.Options = {}): Source {
 
 export declare namespace gcp {
   type Options = {
+    /**
+     * How the source detects Google Cloud. `env` detects `K_SERVICE`. `always` detects on every
+     * platform, for Compute Engine and GKE. A detected source that fails throws, so list an `always`
+     * source last. `Source.defaults` uses `env`. Default: `env`.
+     */
+    detect?: 'always' | 'env' | undefined
     /** Host of the metadata server. Default: `GCE_METADATA_HOST`, else `metadata.google.internal`. */
     metadataHost?: string | undefined
   }

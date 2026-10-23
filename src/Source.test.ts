@@ -62,6 +62,31 @@ describe('gcp', () => {
     expect(token.source).toMatchInlineSnapshot(`"gcp"`)
     expect(token.claims['email']).toMatchInlineSnapshot(`"ci@acme.iam.gserviceaccount.com"`)
   })
+
+  test('requests a token on Compute Engine and GKE, which set no K_SERVICE', async () => {
+    const env = { ...(await issuer.env({ preset: 'gcp' })), K_SERVICE: undefined }
+
+    const token = await Identity.token({
+      audience,
+      env,
+      sources: [Source.githubActions(), Source.gcp({ detect: 'always' })],
+    })
+
+    expect(token.source).toMatchInlineSnapshot(`"gcp"`)
+    expect(token.claims['email']).toMatchInlineSnapshot(`"ci@acme.iam.gserviceaccount.com"`)
+  })
+
+  test('detects nothing without K_SERVICE in the default sources', async () => {
+    const env = { ...(await issuer.env({ preset: 'gcp' })), K_SERVICE: undefined }
+
+    await expect(Identity.token({ audience, env })).rejects.toThrowErrorMatchingInlineSnapshot(`
+      [Identity.NotFoundError: No source detected its platform for audience https://api.example.com. Checked: vercel, githubActions, gitlab, circleci, gcp.
+
+      To resolve:
+      1. Run the code on a platform that issues OIDC tokens, such as GitHub Actions or Vercel.
+      2. On another platform, pass a custom source in \`sources\`, built with \`Source.from\`.]
+    `)
+  })
 })
 
 describe('githubActions', () => {
