@@ -44,7 +44,11 @@ describe('circleci', () => {
     await expect(
       Identity.token({ audience, env: { CIRCLECI: 'true' }, sources: [Source.circleci()] }),
     ).rejects.toThrowErrorMatchingInlineSnapshot(
-      `[Source.RequestError: CIRCLE_OIDC_TOKEN_V2 is not set. Check that CircleCI issues OIDC tokens to this job.]`,
+      `
+      [Source.RequestError: CIRCLE_OIDC_TOKEN_V2 is not set.
+
+      To resolve: Check that CircleCI issues OIDC tokens to this job.]
+    `,
     )
   })
 })
@@ -77,7 +81,11 @@ describe('githubActions', () => {
         sources: [Source.githubActions()],
       }),
     ).rejects.toThrowErrorMatchingInlineSnapshot(
-      `[Source.RequestError: ACTIONS_ID_TOKEN_REQUEST_URL is not set. Add \`permissions: id-token: write\` to the job.]`,
+      `
+      [Source.RequestError: ACTIONS_ID_TOKEN_REQUEST_URL is not set.
+
+      To resolve: Add \`permissions: id-token: write\` to the job, or to the workflow.]
+    `,
     )
   })
 
@@ -87,9 +95,18 @@ describe('githubActions', () => {
       ACTIONS_ID_TOKEN_REQUEST_TOKEN: 'wrong',
     }
 
-    await expect(
-      Identity.token({ audience, env, sources: [Source.githubActions()] }),
-    ).rejects.toThrow(/returned HTTP 401\.$/)
+    const error = await Identity.token({ audience, env, sources: [Source.githubActions()] }).then(
+      () => undefined,
+      (error: Source.RequestError) => error,
+    )
+    if (!error) throw new Error('Expected a refusal.')
+
+    expect(error.details.endsWith('returned HTTP 401.')).toMatchInlineSnapshot(`true`)
+    expect(error.steps).toMatchInlineSnapshot(`
+      [
+        "Check that the job may request OIDC tokens, such as \`permissions: id-token: write\` on GitHub Actions.",
+      ]
+    `)
   })
 
   // Runs only in GitHub Actions with `id-token: write`, against GitHub's own issuer and keys.
@@ -137,7 +154,11 @@ describe('gitlab', () => {
     await expect(
       Identity.token({ audience, env: { GITLAB_CI: 'true' }, sources: [Source.gitlab()] }),
     ).rejects.toThrowErrorMatchingInlineSnapshot(
-      `[Source.RequestError: HTTPS___API_EXAMPLE_COM_ID_TOKEN is not set. Declare \`HTTPS___API_EXAMPLE_COM_ID_TOKEN\` under \`id_tokens\` in .gitlab-ci.yml, with \`aud: https://api.example.com\`.]`,
+      `
+      [Source.RequestError: HTTPS___API_EXAMPLE_COM_ID_TOKEN is not set.
+
+      To resolve: Declare \`HTTPS___API_EXAMPLE_COM_ID_TOKEN\` under \`id_tokens\` in .gitlab-ci.yml, with \`aud: https://api.example.com\`.]
+    `,
     )
   })
 })
@@ -172,7 +193,13 @@ describe('vercel', () => {
     await expect(
       Identity.token({ audience, env: { VERCEL: '1' }, sources: [Source.vercel()] }),
     ).rejects.toThrowErrorMatchingInlineSnapshot(
-      `[Source.RequestError: No Vercel OIDC token is available. Call it inside a request on Vercel Functions, or run \`vercel env pull\` for local development.]`,
+      `
+      [Source.RequestError: No Vercel OIDC token is available.
+
+      To resolve:
+      1. On Vercel Functions, request the token inside a request.
+      2. For local development, run \`vercel env pull\` to write \`VERCEL_OIDC_TOKEN\`.]
+    `,
     )
   })
 })

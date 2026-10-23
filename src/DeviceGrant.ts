@@ -1,5 +1,6 @@
 /** @module The device authorization grant (RFC 8628): sign-in for a program without a browser of its own. */
 import * as Grant from './Grant.js'
+import * as Errors from './internal/Errors.js'
 import * as OAuth from './internal/OAuth.js'
 import * as Metadata from './Metadata.js'
 
@@ -16,11 +17,13 @@ export type Code = {
 }
 
 /** Thrown when the user denies the code. */
-export class DeniedError extends Error {
+export class DeniedError extends Errors.BaseError {
   override name = 'DeviceGrant.DeniedError'
 
   constructor() {
-    super('The user denied the device code.')
+    super('The user denied the device code.', {
+      steps: ['Run `authorize` again, and approve the code on the verification page.'],
+    })
   }
 }
 
@@ -41,16 +44,18 @@ export declare namespace wait {
 }
 
 /** Thrown when the code expires before the user approves it. */
-export class ExpiredError extends Error {
+export class ExpiredError extends Errors.BaseError {
   override name = 'DeviceGrant.ExpiredError'
 
   constructor() {
-    super('The device code expired before approval.')
+    super('The device code expired before approval.', {
+      steps: ['Run `authorize` again, and approve the code before it expires.'],
+    })
   }
 }
 
 /** Thrown when the server rejects a request with an RFC 6749 §5.2 error other than a pending state. */
-export class RejectedError extends Error {
+export class RejectedError extends Errors.BaseError {
   override name = 'DeviceGrant.RejectedError'
 
   /** RFC 6749 `error`. */
@@ -65,6 +70,7 @@ export class RejectedError extends Error {
       options.errorDescription
         ? `The server rejected the device grant: ${options.error} (${options.errorDescription}).`
         : `The server rejected the device grant: ${options.error}.`,
+      { steps: Errors.oauth(options.error, 'device') },
     )
     this.error = options.error
     this.errorDescription = options.errorDescription
@@ -185,11 +191,16 @@ export declare namespace start {
 }
 
 /** Thrown when the server has no device authorization endpoint. */
-export class UnsupportedError extends Error {
+export class UnsupportedError extends Errors.BaseError {
   override name = 'DeviceGrant.UnsupportedError'
 
   constructor() {
-    super('The server has no device authorization endpoint.')
+    super('The server has no device authorization endpoint.', {
+      steps: [
+        'Set `endpoints.deviceAuthorization` if the server supports RFC 8628 without metadata.',
+        'Otherwise, run the code on a platform whose subject token the server exchanges.',
+      ],
+    })
   }
 }
 

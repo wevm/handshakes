@@ -1,4 +1,5 @@
 /** @module An authorization grant: the access token and refresh token that a token endpoint issues. */
+import * as Errors from './internal/Errors.js'
 
 /**
  * Returns whether a token expires soon enough to replace: when 60 seconds or 20% of its lifetime
@@ -82,10 +83,15 @@ export type Grant = {
 }
 
 /** Thrown when a token response is not a valid RFC 6749 §5.1 response. */
-export class InvalidResponseError extends Error {
+export class InvalidResponseError extends Errors.BaseError {
   override name = 'Grant.InvalidResponseError'
 
   constructor() {
-    super('The token response has no `access_token` or `expires_in`.')
+    super('The token response has no `access_token` or `expires_in`.', {
+      steps: [
+        'Check that the token endpoint returns an RFC 6749 §5.1 response with `expires_in`.',
+        'For a GitHub App, turn on the expiration of user tokens.',
+      ],
+    })
   }
 }

@@ -21,7 +21,12 @@ export function create(options: { command: readonly string[] }) {
     async run(c) {
       const [program, ...rest] = options.command
       if (!program)
-        return c.error({ code: 'NO_COMMAND', exitCode: 2, message: 'Pass the command after `--`.' })
+        return c.error({
+          code: 'NO_COMMAND',
+          exitCode: 2,
+          message:
+            'No command follows `--`. To resolve: Write the command after `--`, such as `handshakes exec -- pnpm test`.',
+        })
 
       const result = await (async () => {
         try {

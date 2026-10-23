@@ -15,7 +15,11 @@ describe('buildkite', () => {
         sources: [Source.buildkite()],
       }),
     ).rejects.toThrowErrorMatchingInlineSnapshot(
-      `[Source.RequestError: buildkite-agent did not return an OIDC token. Run the job on a Buildkite agent, which provides \`buildkite-agent\`.]`,
+      `
+      [Source.RequestError: buildkite-agent did not return an OIDC token.
+
+      To resolve: Run the job on a Buildkite agent, which provides \`buildkite-agent\`.]
+    `,
     )
   })
 })
@@ -73,7 +77,13 @@ describe('file', () => {
         sources: [Source.file({ path: Path.join(directory, 'missing') })],
       }),
     ).rejects.toThrowErrorMatchingInlineSnapshot(
-      `[Identity.NotFoundError: No source detected its platform for audience https://api.example.com. Checked: file.]`,
+      `
+      [Identity.NotFoundError: No source detected its platform for audience https://api.example.com. Checked: file.
+
+      To resolve:
+      1. Run the code on a platform that issues OIDC tokens, such as GitHub Actions or Vercel.
+      2. On another platform, pass a custom source in \`sources\`, built with \`Source.from\`.]
+    `,
     )
   })
 })

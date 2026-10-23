@@ -2,6 +2,7 @@
  * @module Discovery of OAuth endpoints: authorization server metadata (RFC 8414, OpenID Connect
  * Discovery), protected resource metadata (RFC 9728), and the `WWW-Authenticate` challenge of an API.
  */
+import * as Errors from './internal/Errors.js'
 
 /** The endpoints and capabilities of an authorization server. */
 export type AuthorizationServer = {
@@ -206,7 +207,7 @@ export declare namespace protectedResource {
 }
 
 /** Thrown when the issuer serves no valid metadata. */
-export class NotFoundError extends Error {
+export class NotFoundError extends Errors.BaseError {
   override name = 'Metadata.NotFoundError'
 
   /** The issuer. */
@@ -215,6 +216,10 @@ export class NotFoundError extends Error {
   constructor(options: NotFoundError.Options) {
     super(`The issuer ${options.issuer} serves no authorization server metadata.`, {
       cause: options.cause,
+      steps: [
+        'Check that `issuer` equals the `issuer` of the metadata of the server, with no trailing slash.',
+        'For a server without metadata, set `endpoints`.',
+      ],
     })
     this.issuer = options.issuer
   }
@@ -228,7 +233,7 @@ export declare namespace NotFoundError {
 }
 
 /** Thrown when the resource serves no valid metadata. */
-export class ResourceNotFoundError extends Error {
+export class ResourceNotFoundError extends Errors.BaseError {
   override name = 'Metadata.ResourceNotFoundError'
 
   /** The resource identifier. */
@@ -237,6 +242,10 @@ export class ResourceNotFoundError extends Error {
   constructor(options: ResourceNotFoundError.Options) {
     super(`The resource ${options.resource} serves no protected resource metadata.`, {
       cause: options.cause,
+      steps: [
+        'Check that the API serves RFC 9728 metadata at `/.well-known/oauth-protected-resource`, with this `resource`.',
+        'Or set `issuer` in a profile for the API.',
+      ],
     })
     this.resource = options.resource
   }

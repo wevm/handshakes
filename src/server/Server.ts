@@ -58,7 +58,9 @@ export function create(options: create.Options): Server {
     })
     // The credential must not outlive the subject token. A later expiry is a defect of `issue`.
     if (issued.expiresAt > result.expiresAt)
-      throw new Error('`issue` returned a credential that expires after `expiresAt`.')
+      throw new Error(
+        '`issue` returned a credential that expires after `expiresAt`. Return an `expiresAt` of at most `IssueContext.expiresAt`.',
+      )
 
     return Response.json(
       {

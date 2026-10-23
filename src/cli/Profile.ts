@@ -58,7 +58,10 @@ export function list(options: list.Options = {}): {
   // User configuration first, so the project file replaces its profiles.
   for (const file of [...files].reverse()) {
     const parsed = schema.file.safeParse(JSON.parse(Fs.readFileSync(file, 'utf8')))
-    if (!parsed.success) throw new ConfigError(`${file} is not a valid configuration file.`)
+    if (!parsed.success)
+      throw new ConfigError(
+        `${file} is not a valid configuration file. To resolve: Fix the file so that it matches the profile schema in the README.`,
+      )
 
     fallback = parsed.data.default ?? fallback
     for (const [name, profile] of Object.entries(parsed.data.profiles ?? {}))
@@ -86,7 +89,10 @@ export function resolve(options: resolve.Options): Profile | undefined {
   const all = list(options)
   const name = options.name ?? env['HANDSHAKES_PROFILE'] ?? all.default
   const profile = name ? all.profiles.find((entry) => entry.name === name) : undefined
-  if (name && !profile && options.name) throw new ConfigError(`No profile is named ${name}.`)
+  if (name && !profile && options.name)
+    throw new ConfigError(
+      `No profile is named ${name}. To resolve: Run \`handshakes profiles\` to list the profiles.`,
+    )
 
   const merged = {
     ...profile,

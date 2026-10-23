@@ -5,6 +5,7 @@
 import * as Fs from 'node:fs'
 import { Cli, z } from 'incur'
 import * as Client from '../../Client.js'
+import * as Errors from '../../internal/Errors.js'
 import * as Metadata from '../../Metadata.js'
 import * as Source from '../../node/Source.js'
 import * as Store from '../../node/Store.js'
@@ -35,7 +36,12 @@ export default Cli.command({
     const name = c.args.url === undefined ? undefined : c.args.profile
     const url = c.args.url ?? c.args.profile
     if (!url)
-      return c.error({ code: 'NO_URL', exitCode: 2, message: 'Pass the URL of the request.' })
+      return c.error({
+        code: 'NO_URL',
+        exitCode: 2,
+        message:
+          'No URL is set. To resolve: Pass the URL, such as `handshakes fetch https://api.example.com/v1/items`.',
+      })
 
     const headers = new Headers()
     for (const header of c.options.header ?? []) {
@@ -44,7 +50,7 @@ export default Cli.command({
         return c.error({
           code: 'INVALID_HEADER',
           exitCode: 2,
-          message: `Invalid header: ${header}. Write it as \`Name: value\`.`,
+          message: `Invalid header: ${header}. To resolve: Write each header as \`Name: value\`.`,
         })
       headers.append(header.slice(0, index).trim(), header.slice(index + 1).trim())
     }
@@ -89,7 +95,7 @@ export default Cli.command({
         return c.error({
           code: 'HTTP_ERROR',
           exitCode: 22,
-          message: `The request returned HTTP ${response.status}.`,
+          message: `The request returned HTTP ${response.status}. To resolve: Read \`body\` for the error of the API.`,
         })
       return {
         body: text,
@@ -101,7 +107,7 @@ export default Cli.command({
         return c.error({
           code: 'NO_PROFILE',
           exitCode: 2,
-          message: `${error.message} Name a profile, or pass --issuer.`,
+          message: Errors.inline(error),
         })
       return c.error(Context.error(error))
     }

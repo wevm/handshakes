@@ -44,6 +44,7 @@ Source commit: `0b589ec34481856b4153526f10a0a35558a201a8`. Retrieved 2026-10-23.
 - Use `import type` and `export type` where an import or export is type-only.
 - Use functions and plain data for normal APIs. Classes are limited to errors and framework-required entrypoints.
 - Keep error classes in the module that throws them, ordered alphabetically with its public exports. Set custom error `name` values to the namespaced form, such as `Client.AuthorizationRequiredError`.
+- Extend `Errors.BaseError` from `src/internal/Errors.ts` for every error class. Pass `details`, what failed, and `steps`, the imperative sentences that resolve it. The message lists the steps under `To resolve:`, and the CLI prints them on one line with `Errors.inline`. A `TypeError` for a wrong option names the fix in its message.
 - Use unions or `as const` objects instead of enums.
 - Prefer `camelCase` constants. Preserve uppercase names only when they mirror an external protocol or established neighboring code.
 - Use `const` generic parameters when callers should retain literal or tuple types.

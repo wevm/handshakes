@@ -4,6 +4,7 @@ import * as Fs from 'node:fs/promises'
 import * as Os from 'node:os'
 import * as Path from 'node:path'
 import type * as Grant from '../Grant.js'
+import * as Errors from '../internal/Errors.js'
 import type * as Store from '../Store.js'
 
 /** A lock older than this is from a process that stopped, and is removed. */
@@ -95,14 +96,19 @@ export declare namespace file {
 }
 
 /** Thrown when another process holds the lock longer than `lockTimeout`. */
-export class LockTimeoutError extends Error {
+export class LockTimeoutError extends Errors.BaseError {
   override name = 'Store.LockTimeoutError'
 
   /** The store key. */
   readonly key: string
 
   constructor(options: { key: string }) {
-    super('Another process holds the lock of the grant.')
+    super('Another process holds the lock of the grant.', {
+      steps: [
+        'Wait for the other process to finish, then run the command again.',
+        'If no other process runs, delete the `.lock` file in the grant directory.',
+      ],
+    })
     this.key = options.key
   }
 }

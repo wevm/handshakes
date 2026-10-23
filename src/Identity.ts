@@ -1,9 +1,10 @@
 /** @module The subject token of the running code: the OIDC token that its platform signs. */
+import * as Errors from './internal/Errors.js'
 import * as Jwt from './internal/Jwt.js'
 import * as Source from './Source.js'
 
 /** Thrown when the token of a source carries another `aud` than the requested one. */
-export class AudienceError extends Error {
+export class AudienceError extends Errors.BaseError {
   override name = 'Identity.AudienceError'
 
   /** The requested audience. */
@@ -16,6 +17,12 @@ export class AudienceError extends Error {
   constructor(options: AudienceError.Options) {
     super(
       `The ${options.source} token has aud ${JSON.stringify(options.received)}, not ${JSON.stringify(options.expected)}.`,
+      {
+        steps: [
+          `Configure the platform to issue the token for ${JSON.stringify(options.expected)}, such as \`id_tokens\` in .gitlab-ci.yml.`,
+          'Or request the audience that the token carries, through `audience` or `subjectAudience`.',
+        ],
+      },
     )
     this.expected = options.expected
     this.received = options.received
@@ -47,7 +54,7 @@ export declare namespace detect {
 }
 
 /** Thrown when no source detects its platform. */
-export class NotFoundError extends Error {
+export class NotFoundError extends Errors.BaseError {
   override name = 'Identity.NotFoundError'
 
   /** The requested audience. */
@@ -58,6 +65,12 @@ export class NotFoundError extends Error {
   constructor(options: NotFoundError.Options) {
     super(
       `No source detected its platform for audience ${options.audience}. Checked: ${options.checked.join(', ') || 'none'}.`,
+      {
+        steps: [
+          'Run the code on a platform that issues OIDC tokens, such as GitHub Actions or Vercel.',
+          'On another platform, pass a custom source in `sources`, built with `Source.from`.',
+        ],
+      },
     )
     this.audience = options.audience
     this.checked = options.checked
@@ -98,6 +111,9 @@ export async function token(options: token.Options): Promise<Token> {
     throw new Source.RequestError({
       message: 'The source returned a value that is not a JWT with `exp`.',
       source: source.name,
+      steps: [
+        'Check that the source returns an OIDC token, such as the file that `Source.file` reads.',
+      ],
     })
 
   const received = Jwt.audiences(decoded.payload)

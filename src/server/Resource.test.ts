@@ -181,7 +181,7 @@ describe('create', () => {
         resource: api,
       }),
     ).toThrowErrorMatchingInlineSnapshot(
-      `[TypeError: The audience of policy vercel:prj_app:* must be https://api.example.com.]`,
+      `[TypeError: The audience of policy vercel:prj_app:* must be https://api.example.com. Set the audience of the policy to the resource, or create one \`Resource\` for each audience.]`,
     )
   })
 })

@@ -27,12 +27,12 @@ export function buildkite(): Source.Source {
             reject(
               new Source.RequestError({
                 cause: error,
-                hint:
-                  (error as NodeJS.ErrnoException).code === 'ENOENT'
-                    ? 'Run the job on a Buildkite agent, which provides `buildkite-agent`.'
-                    : 'Check that the agent version supports `oidc request-token`.',
                 message: 'buildkite-agent did not return an OIDC token.',
                 source: name,
+                steps:
+                  (error as NodeJS.ErrnoException).code === 'ENOENT'
+                    ? ['Run the job on a Buildkite agent, which provides `buildkite-agent`.']
+                    : ['Update the Buildkite agent to a version with `oidc request-token`.'],
               }),
             )
           },

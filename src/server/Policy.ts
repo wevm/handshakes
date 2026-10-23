@@ -72,7 +72,10 @@ export declare namespace githubActions {
 export function vercel(options: vercel.Options): Policy {
   const issuer =
     options.issuer ?? (options.team ? `https://oidc.vercel.com/${options.team}` : undefined)
-  if (!issuer) throw new TypeError('Set `team` or `issuer`.')
+  if (!issuer)
+    throw new TypeError(
+      'Set `team` for the issuer `https://oidc.vercel.com/<team>`, or set `issuer` for a custom issuer.',
+    )
 
   return {
     audience: options.audience,

@@ -21,7 +21,9 @@ export function create(options: create.Options): Resource {
   // A subject token for another API must not pass here, so each policy names this API.
   for (const policy of policies)
     if (policy.audience !== options.resource)
-      throw new TypeError(`The audience of policy ${policy.id} must be ${options.resource}.`)
+      throw new TypeError(
+        `The audience of policy ${policy.id} must be ${options.resource}. Set the audience of the policy to the resource, or create one \`Resource\` for each audience.`,
+      )
 
   const resource = new URL(options.resource)
   const path = resource.pathname === '/' ? '' : resource.pathname

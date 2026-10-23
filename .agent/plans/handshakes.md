@@ -445,6 +445,8 @@ type Token = {
 
 ### Errors
 
+Every error extends `BaseError`, with `details` (what failed) and `steps` (the imperative sentences that resolve it). The message lists the steps under `To resolve:`. RFC 6749 errors map their `error` code to steps, such as `invalid_target` to a check of `resource`.
+
 | Error                               | Thrown when                                                                                           | Fields                                |
 | ----------------------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------- |
 | `Client.AuthorizationRequiredError` | No source detects, no grant is stored, and the client is not interactive                              | `issuer`                              |
@@ -460,7 +462,7 @@ type Token = {
 | `Identity.NotFoundError`            | No source detects                                                                                     | `audience`, `checked`                 |
 | `Metadata.NotFoundError`            | The issuer serves no metadata                                                                         | `issuer`                              |
 | `Metadata.ResourceNotFoundError`    | The resource serves no metadata, or metadata of another resource                                      | `resource`                            |
-| `Source.RequestError`               | The detected source fails. The hint states the fix, such as `permissions: id-token: write`            | `hint`, `source`                      |
+| `Source.RequestError`               | The detected source fails. `steps` states the fix, such as `permissions: id-token: write`             | `source`, `steps`                     |
 | `Store.LockTimeoutError`            | Another process holds the lock of `Store.file` past `lockTimeout`                                     | `key`                                 |
 
 ### `handshakes/test`

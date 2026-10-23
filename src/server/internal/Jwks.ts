@@ -27,7 +27,10 @@ export function create(options: create.Options) {
     })()
 
     const response = await options.fetch(uri ?? `${issuer.replace(/\/$/, '')}/.well-known/jwks`)
-    if (!response.ok) throw new Error(`The keys of ${issuer} returned HTTP ${response.status}.`)
+    if (!response.ok)
+      throw new Error(
+        `The keys of ${issuer} returned HTTP ${response.status}. Check that the issuer serves \`jwks_uri\` in its discovery document, or \`/.well-known/jwks\`.`,
+      )
     const body = (await response.json()) as { keys?: unknown }
     const set = Array.isArray(body.keys) ? (body.keys as JsonWebKey[]) : []
 

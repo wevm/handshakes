@@ -7,6 +7,7 @@ import * as DeviceGrant from './DeviceGrant.js'
 import * as Exchange from './Exchange.js'
 import * as Grant from './Grant.js'
 import * as Identity from './Identity.js'
+import * as Errors from './internal/Errors.js'
 import * as Jwt from './internal/Jwt.js'
 import * as OAuth from './internal/OAuth.js'
 import * as Metadata from './Metadata.js'
@@ -28,16 +29,19 @@ export type AccessToken = {
 }
 
 /** Thrown when no method applies: no source detects, no grant is stored, and the client is not interactive. */
-export class AuthorizationRequiredError extends Error {
+export class AuthorizationRequiredError extends Errors.BaseError {
   override name = 'Client.AuthorizationRequiredError'
 
   /** The issuer, or the token endpoint. */
   readonly issuer: string
 
   constructor(options: { issuer: string }) {
-    super(
-      `Authorization is required for ${options.issuer}. Run the device grant with \`authorize\`.`,
-    )
+    super(`Authorization is required for ${options.issuer}.`, {
+      steps: [
+        'On a device, run `authorize` (`handshakes authorize` in the CLI) to run the device grant.',
+        'In CI, check that the platform is detected with `handshakes status`.',
+      ],
+    })
     this.issuer = options.issuer
   }
 }
@@ -131,7 +135,7 @@ export function create(options: create.Options): Client {
         await store.delete(key)
         return undefined
       }
-      if (!result.ok) throw new RejectedError(result)
+      if (!result.ok) throw new RejectedError({ ...result, request: 'refresh' })
 
       const next = Grant.fromResponse(result.body, {
         clientId: options.clientId,
@@ -145,7 +149,10 @@ export function create(options: create.Options): Client {
   }
 
   async function authorize(waitOptions: DeviceGrant.wait.Options = {}): Promise<Grant.Grant> {
-    if (!options.clientId) throw new TypeError('Set `clientId` to run the device grant.')
+    if (!options.clientId)
+      throw new TypeError(
+        'Set `clientId` to run the device grant. Use the ID of a client that the server registers for the device grant.',
+      )
 
     const grant = await DeviceGrant.start({
       clientId: options.clientId,
@@ -274,7 +281,8 @@ export function create(options: create.Options): Client {
       })
 
       // A token that the server no longer knows is revoked already. Some servers return 400 for it.
-      if (!result.ok && result.status >= 500) throw new RejectedError(result)
+      if (!result.ok && result.status >= 500)
+        throw new RejectedError({ ...result, request: 'revoke' })
     },
     async status() {
       const source = sources.find((entry) => entry.detect(env))
@@ -385,14 +393,19 @@ export declare namespace discover {
 }
 
 /** Thrown when an API names no authorization server, or names metadata of another resource. */
-export class DiscoveryError extends Error {
+export class DiscoveryError extends Errors.BaseError {
   override name = 'Client.DiscoveryError'
 
   /** The URL or resource of the API. */
   readonly url: string
 
   constructor(options: { url: string }) {
-    super(`The API at ${options.url} names no authorization server for itself.`)
+    super(`The API at ${options.url} names no authorization server for itself.`, {
+      steps: [
+        'Check that the API returns `WWW-Authenticate: Bearer resource_metadata=…` without a token (RFC 9728).',
+        'Or set `issuer` in a profile for the API.',
+      ],
+    })
     this.url = options.url
   }
 }
@@ -401,7 +414,7 @@ export class DiscoveryError extends Error {
 export type PerSource<value> = value | ((source: Source.Source) => value)
 
 /** Thrown when the token or revocation endpoint rejects a request with an RFC 6749 §5.2 error. */
-export class RejectedError extends Error {
+export class RejectedError extends Errors.BaseError {
   override name = 'Client.RejectedError'
 
   /** RFC 6749 `error`. */
@@ -411,11 +424,17 @@ export class RejectedError extends Error {
   /** HTTP status of the response. */
   readonly status: number
 
-  constructor(options: { error: string; errorDescription: string | undefined; status: number }) {
+  constructor(options: {
+    error: string
+    errorDescription: string | undefined
+    request: 'refresh' | 'revoke'
+    status: number
+  }) {
     super(
       options.errorDescription
         ? `The server rejected the request: ${options.error} (${options.errorDescription}).`
         : `The server rejected the request: ${options.error}.`,
+      { steps: Errors.oauth(options.error, options.request) },
     )
     this.error = options.error
     this.errorDescription = options.errorDescription

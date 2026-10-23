@@ -109,7 +109,9 @@ export function tokenExchange(options: tokenExchange.Options = {}) {
     })
     // A resource or scope with a longer lifetime than `m2mAccessTokenExpiresIn` is a configuration defect.
     if (issued.expires_at * 1000 > result.expiresAt + 1000)
-      throw new Error('Better Auth issued an access token that expires after the subject token.')
+      throw new Error(
+        'Better Auth issued an access token that expires after the subject token. Set `accessTokenTtl` of each resource and each `scopeExpirations` entry at or below `m2mAccessTokenExpiresIn`.',
+      )
 
     return issued
   }
@@ -152,7 +154,9 @@ export function tokenExchange(options: tokenExchange.Options = {}) {
     id: 'handshakes-token-exchange',
     init(context) {
       if (!context.getPlugin('oauth-provider'))
-        throw new Error('tokenExchange() requires oauthProvider().')
+        throw new Error(
+          'tokenExchange() requires oauthProvider(). Add `oauthProvider()` to the plugins before `tokenExchange()`.',
+        )
       extendOAuthProvider(context, { grants: { [grantType]: handler } })
     },
     schema: {

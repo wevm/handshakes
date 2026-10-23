@@ -111,7 +111,13 @@ describe('token', () => {
     // The port changes on every run, so the issuer is replaced.
     expect(error.name).toMatchInlineSnapshot(`"Client.AuthorizationRequiredError"`)
     expect(error.message.replace(server.url, '<issuer>')).toMatchInlineSnapshot(
-      `"Authorization is required for <issuer>. Run the device grant with \`authorize\`."`,
+      `
+      "Authorization is required for <issuer>.
+
+      To resolve:
+      1. On a device, run \`authorize\` (\`handshakes authorize\` in the CLI) to run the device grant.
+      2. In CI, check that the platform is detected with \`handshakes status\`."
+    `,
     )
   })
 
@@ -285,7 +291,13 @@ describe('with a subject token', () => {
     })
 
     await expect(client.token()).rejects.toThrowErrorMatchingInlineSnapshot(
-      `[Exchange.RejectedError: The server rejected the token exchange: invalid_grant (The subject token matches no trust policy.).]`,
+      `
+      [Exchange.RejectedError: The server rejected the token exchange: invalid_grant (The subject token matches no trust policy.).
+
+      To resolve:
+      1. Check that a trust policy on the server matches the issuer, audience, and claims of the subject token.
+      2. Check that the subject token has not expired.]
+    `,
     )
   })
 })

@@ -1,20 +1,16 @@
 /** @module Sources of subject tokens: the platforms that sign an OIDC token for the running code. */
+import * as Errors from './internal/Errors.js'
 import * as Jwt from './internal/Jwt.js'
 
-/** Thrown when a detected source cannot return a token. `hint` states the fix. */
-export class RequestError extends Error {
+/** Thrown when a detected source cannot return a token. `steps` states the fix. */
+export class RequestError extends Errors.BaseError {
   override name = 'Source.RequestError'
 
-  /** The change that makes the source work, such as a missing permission. */
-  readonly hint: string | undefined
   /** Name of the source, such as `githubActions`. */
   readonly source: string
 
   constructor(options: RequestError.Options) {
-    super(options.hint ? `${options.message} ${options.hint}` : options.message, {
-      cause: options.cause,
-    })
-    this.hint = options.hint
+    super(options.message, { cause: options.cause, steps: options.steps })
     this.source = options.source
   }
 }
@@ -23,8 +19,8 @@ export declare namespace RequestError {
   type Options = {
     /** The error of the request that failed, if any. */
     cause?: unknown
-    /** The change that makes the source work. */
-    hint?: string | undefined
+    /** The steps that make the source work, such as a missing permission. */
+    steps: readonly string[]
     /** What failed. Never contains a token value. */
     message: string
     /** Name of the source. */
@@ -69,7 +65,7 @@ export function circleci(): Source {
       const value = context.env['CIRCLE_OIDC_TOKEN_V2']
       if (!value)
         throw new RequestError({
-          hint: 'Check that CircleCI issues OIDC tokens to this job.',
+          steps: ['Check that CircleCI issues OIDC tokens to this job.'],
           message: 'CIRCLE_OIDC_TOKEN_V2 is not set.',
           source: name,
         })
@@ -130,7 +126,7 @@ export function githubActions(): Source {
       const requestToken = context.env['ACTIONS_ID_TOKEN_REQUEST_TOKEN']
       if (!url || !requestToken)
         throw new RequestError({
-          hint: 'Add `permissions: id-token: write` to the job.',
+          steps: ['Add `permissions: id-token: write` to the job, or to the workflow.'],
           message: 'ACTIONS_ID_TOKEN_REQUEST_URL is not set.',
           source: name,
         })
@@ -143,7 +139,11 @@ export function githubActions(): Source {
       })
       const body = (await response.json()) as { value?: unknown }
       if (typeof body.value !== 'string')
-        throw new RequestError({ message: 'The token response has no `value`.', source: name })
+        throw new RequestError({
+          message: 'The token response has no `value`.',
+          source: name,
+          steps: ['Check that the runner supports OIDC tokens, then run the job again.'],
+        })
       return body.value
     },
   }
@@ -164,7 +164,9 @@ export function gitlab(options: gitlab.Options = {}): Source {
       const value = context.env[variable]
       if (!value)
         throw new RequestError({
-          hint: `Declare \`${variable}\` under \`id_tokens\` in .gitlab-ci.yml, with \`aud: ${context.audience}\`.`,
+          steps: [
+            `Declare \`${variable}\` under \`id_tokens\` in .gitlab-ci.yml, with \`aud: ${context.audience}\`.`,
+          ],
           message: `${variable} is not set.`,
           source: name,
         })
@@ -197,7 +199,10 @@ export function vercel(options: vercel.Options = {}): Source {
       const current = vercelRequestToken() ?? context.env['VERCEL_OIDC_TOKEN']
       if (!current)
         throw new RequestError({
-          hint: 'Call it inside a request on Vercel Functions, or run `vercel env pull` for local development.',
+          steps: [
+            'On Vercel Functions, request the token inside a request.',
+            'For local development, run `vercel env pull` to write `VERCEL_OIDC_TOKEN`.',
+          ],
           message: 'No Vercel OIDC token is available.',
           source: name,
         })
@@ -217,7 +222,11 @@ export function vercel(options: vercel.Options = {}): Source {
       )
       const body = (await response.json()) as { token?: unknown }
       if (typeof body.token !== 'string')
-        throw new RequestError({ message: 'The exchange response has no `token`.', source: name })
+        throw new RequestError({
+          message: 'The exchange response has no `token`.',
+          source: name,
+          steps: ['Check that the project enables OIDC federation in its Vercel settings.'],
+        })
       return body.token
     },
   }
@@ -253,7 +262,12 @@ async function request(
     try {
       return await context.fetch(url, init)
     } catch (cause) {
-      throw new RequestError({ cause, message: `The request to ${url.origin} failed.`, source })
+      throw new RequestError({
+        cause,
+        message: `The request to ${url.origin} failed.`,
+        source,
+        steps: ['Check the network access of the job to this host, then run it again.'],
+      })
     }
   })()
 
@@ -261,6 +275,12 @@ async function request(
     throw new RequestError({
       message: `The request to ${url.origin} returned HTTP ${response.status}.`,
       source,
+      steps:
+        response.status === 401 || response.status === 403
+          ? [
+              'Check that the job may request OIDC tokens, such as `permissions: id-token: write` on GitHub Actions.',
+            ]
+          : ['Run the job again. If the error persists, check the status page of the platform.'],
     })
   return response
 }

@@ -144,7 +144,7 @@ describe('handshakes', () => {
     expect(result.status).toMatchInlineSnapshot(`3`)
     expect(result.stdout + result.stderr).toMatchInlineSnapshot(`
       "code: SOURCE_NOT_FOUND
-      message: "No source detected its platform for audience https://api.example.com. Checked: vercel, githubActions, gitlab, circleci, buildkite, gcp."
+      message: "No source detected its platform for audience https://api.example.com. Checked: vercel, githubActions, gitlab, circleci, buildkite, gcp. To resolve: 1. Run the code on a platform that issues OIDC tokens, such as GitHub Actions or Vercel. 2. On another platform, pass a custom source in \`sources\`, built with \`Source.from\`."
       "
     `)
   })
@@ -254,7 +254,7 @@ describe('handshakes', () => {
       expect(after.status).toMatchInlineSnapshot(`3`)
       expect(after.stdout.replace(server.url, '<issuer>')).toMatchInlineSnapshot(`
         "code: AUTHORIZATION_REQUIRED
-        message: "Authorization is required for <issuer>. Run the device grant with \`authorize\`."
+        message: "Authorization is required for <issuer>. To resolve: 1. On a device, run \`authorize\` (\`handshakes authorize\` in the CLI) to run the device grant. 2. In CI, check that the platform is detected with \`handshakes status\`."
         "
       `)
     }, 30_000)
@@ -287,7 +287,7 @@ describe('handshakes', () => {
       expect(result.status).toMatchInlineSnapshot(`2`)
       expect(result.stdout).toMatchInlineSnapshot(`
         "code: NO_PROFILE
-        message: No profile is named missing.
+        message: "No profile is named missing. To resolve: Run \`handshakes profiles\` to list the profiles."
         "
       `)
     })

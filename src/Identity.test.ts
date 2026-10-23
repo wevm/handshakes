@@ -28,7 +28,13 @@ describe('token', () => {
     await expect(
       Identity.token({ audience: 'https://api.example.com', env: {} }),
     ).rejects.toThrowErrorMatchingInlineSnapshot(
-      `[Identity.NotFoundError: No source detected its platform for audience https://api.example.com. Checked: vercel, githubActions, gitlab, circleci, gcp.]`,
+      `
+      [Identity.NotFoundError: No source detected its platform for audience https://api.example.com. Checked: vercel, githubActions, gitlab, circleci, gcp.
+
+      To resolve:
+      1. Run the code on a platform that issues OIDC tokens, such as GitHub Actions or Vercel.
+      2. On another platform, pass a custom source in \`sources\`, built with \`Source.from\`.]
+    `,
     )
   })
 
@@ -38,7 +44,11 @@ describe('token', () => {
     await expect(
       Identity.token({ audience: 'https://api.example.com', env }),
     ).rejects.toThrowErrorMatchingInlineSnapshot(
-      `[Source.RequestError: ACTIONS_ID_TOKEN_REQUEST_URL is not set. Add \`permissions: id-token: write\` to the job.]`,
+      `
+      [Source.RequestError: ACTIONS_ID_TOKEN_REQUEST_URL is not set.
+
+      To resolve: Add \`permissions: id-token: write\` to the job, or to the workflow.]
+    `,
     )
   })
 
@@ -52,7 +62,13 @@ describe('token', () => {
         sources: [Source.gitlab({ variable: 'HTTPS___OTHER_EXAMPLE_COM_ID_TOKEN' })],
       }),
     ).rejects.toThrowErrorMatchingInlineSnapshot(
-      `[Identity.AudienceError: The gitlab token has aud ["https://other.example.com"], not "https://api.example.com".]`,
+      `
+      [Identity.AudienceError: The gitlab token has aud ["https://other.example.com"], not "https://api.example.com".
+
+      To resolve:
+      1. Configure the platform to issue the token for "https://api.example.com", such as \`id_tokens\` in .gitlab-ci.yml.
+      2. Or request the audience that the token carries, through \`audience\` or \`subjectAudience\`.]
+    `,
     )
   })
 
@@ -62,7 +78,11 @@ describe('token', () => {
     await expect(
       Identity.token({ audience: 'https://api.example.com', env: {}, sources: [source] }),
     ).rejects.toThrowErrorMatchingInlineSnapshot(
-      `[Source.RequestError: The source returned a value that is not a JWT with \`exp\`.]`,
+      `
+      [Source.RequestError: The source returned a value that is not a JWT with \`exp\`.
+
+      To resolve: Check that the source returns an OIDC token, such as the file that \`Source.file\` reads.]
+    `,
     )
   })
 })

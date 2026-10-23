@@ -1,6 +1,7 @@
 /** @module The `token` command: prints an access token, or with `--audience`, a subject token. */
 import { Cli, z } from 'incur'
 import * as Identity from '../../Identity.js'
+import * as Errors from '../../internal/Errors.js'
 import * as NodeSource from '../../node/Source.js'
 import * as Source from '../../Source.js'
 import * as Context from '../Context.js'
@@ -26,11 +27,11 @@ export default Cli.command({
       return { expiresAt: token.expiresAt, source: token.source ?? null, value: token.value }
     } catch (error) {
       if (error instanceof Identity.NotFoundError)
-        return c.error({ code: 'SOURCE_NOT_FOUND', exitCode: 3, message: error.message })
+        return c.error({ code: 'SOURCE_NOT_FOUND', exitCode: 3, message: Errors.inline(error) })
       if (error instanceof Identity.AudienceError)
-        return c.error({ code: 'AUDIENCE_MISMATCH', message: error.message })
+        return c.error({ code: 'AUDIENCE_MISMATCH', message: Errors.inline(error) })
       if (error instanceof Source.RequestError)
-        return c.error({ code: 'SOURCE_FAILED', message: error.message })
+        return c.error({ code: 'SOURCE_FAILED', message: Errors.inline(error) })
       return c.error(Context.error(error))
     }
   },

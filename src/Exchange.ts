@@ -1,4 +1,5 @@
 /** @module The token exchange (RFC 8693): trades a subject token for an access token at a token endpoint. */
+import * as Errors from './internal/Errors.js'
 import * as OAuth from './internal/OAuth.js'
 
 /** An access token that a token exchange issued. */
@@ -16,7 +17,7 @@ export type Issued = {
 }
 
 /** Thrown when the token endpoint rejects the exchange with an RFC 6749 §5.2 error. */
-export class RejectedError extends Error {
+export class RejectedError extends Errors.BaseError {
   override name = 'Exchange.RejectedError'
 
   /** RFC 6749 `error`, such as `invalid_grant`. */
@@ -31,6 +32,7 @@ export class RejectedError extends Error {
       options.errorDescription
         ? `The server rejected the token exchange: ${options.error} (${options.errorDescription}).`
         : `The server rejected the token exchange: ${options.error}.`,
+      { steps: Errors.oauth(options.error, 'exchange') },
     )
     this.error = options.error
     this.errorDescription = options.errorDescription
