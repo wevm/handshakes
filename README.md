@@ -11,23 +11,30 @@
 ## Overview
 
 ```ts
-import { createOpenAICompatible } from '@ai-sdk/openai-compatible'
-import { generateText } from 'ai'
+import Anthropic from '@anthropic-ai/sdk'
+import { oidcFederationProvider } from '@anthropic-ai/sdk/lib/credentials/oidc-federation'
 import { Identity } from 'handshakes'
 
-// Reads the Vercel OIDC token of the function, or `VERCEL_OIDC_TOKEN` from `vercel env pull`.
-const token = await Identity.token({ audience: 'https://vercel.com/acme' })
+// Requests a new OIDC token from the platform, such as GitHub Actions, for each exchange.
+const identityTokenProvider = async () =>
+  (await Identity.token({ audience: 'https://api.anthropic.com' })).value
 
-// Authenticates to Vercel AI Gateway with the token, in place of `AI_GATEWAY_API_KEY`.
-const gateway = createOpenAICompatible({
-  apiKey: token.value,
-  baseURL: 'https://ai-gateway.vercel.sh/v1',
-  name: 'gateway',
+// Exchanges the token for a short-lived Claude API token, in place of `ANTHROPIC_API_KEY`.
+const client = new Anthropic({
+  credentials: oidcFederationProvider({
+    baseURL: 'https://api.anthropic.com',
+    federationRuleId: 'fdrl_...',
+    fetch,
+    identityTokenProvider,
+    organizationId: '00000000-0000-0000-0000-000000000000',
+    serviceAccountId: 'svac_...',
+  }),
 })
 
-const { text } = await generateText({
-  model: gateway('anthropic/claude-sonnet-4.5'),
-  prompt: 'Summarize the release notes.',
+const message = await client.messages.create({
+  max_tokens: 1024,
+  messages: [{ content: 'Summarize the release notes.', role: 'user' }],
+  model: 'claude-opus-5-5',
 })
 ```
 
@@ -52,7 +59,7 @@ Read github.com/wevm/handshakes and replace the stored API keys of my project wi
 
 - **Token Exchange:** Exchanges the OIDC token of GitHub Actions, Vercel, GitLab, CircleCI, Google Cloud, or Buildkite for an access token ([RFC 8693](https://www.rfc-editor.org/rfc/rfc8693)).
 - **Device Authorization:** Runs the device authorization grant on a laptop ([RFC 8628](https://www.rfc-editor.org/rfc/rfc8628)), then stores and refreshes the grant.
-- **Subject Tokens:** Returns the platform token itself, for APIs that accept it directly, such as Vercel AI Gateway.
+- **Subject Tokens:** Returns the platform token itself, for APIs that accept it directly, such as Vercel AI Gateway, and for SDKs that exchange it, such as the Anthropic SDK.
 - **Discovery:** Finds the authorization server of an API from its metadata ([RFC 9728](https://www.rfc-editor.org/rfc/rfc9728), [RFC 8414](https://www.rfc-editor.org/rfc/rfc8414)).
 - **Grant Stores:** Keeps grants in memory, in a file with a lock across processes, or in the system keychain.
 - **Token Endpoint:** Serves the RFC 8693 token endpoint as a fetch handler. The host issues the credential.
