@@ -55,6 +55,29 @@ export type Source = {
   token: (context: Context) => Promise<string>
 }
 
+/**
+ * CircleCI. Reads `CIRCLE_OIDC_TOKEN_V2`, whose `aud` is the ID of the CircleCI organization. Another
+ * audience needs `circleci run oidc get` in the job, and a token passed through `Source.file`.
+ */
+export function circleci(): Source {
+  const name = 'circleci'
+
+  return {
+    detect: (env) => env['CIRCLECI'] === 'true',
+    name,
+    async token(context) {
+      const value = context.env['CIRCLE_OIDC_TOKEN_V2']
+      if (!value)
+        throw new RequestError({
+          hint: 'Check that CircleCI issues OIDC tokens to this job.',
+          message: 'CIRCLE_OIDC_TOKEN_V2 is not set.',
+          source: name,
+        })
+      return value
+    },
+  }
+}
+
 /** Returns `source` unchanged, typed as a source. */
 export function from(source: Source): Source {
   return source
@@ -208,7 +231,7 @@ export declare namespace vercel {
 }
 
 /** The default sources, in priority order. The order is observable: the first detected source wins. */
-export const defaults: readonly Source[] = [vercel(), githubActions(), gitlab(), gcp()]
+export const defaults: readonly Source[] = [vercel(), githubActions(), gitlab(), circleci(), gcp()]
 
 /** Returns the GitLab variable name for an audience: uppercase, with `_` for other characters. */
 function gitlabVariable(audience: string): string {

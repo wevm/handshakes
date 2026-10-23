@@ -32,7 +32,8 @@ export async function post(options: post.Options): Promise<Result> {
     }
   })()
 
-  if (response.ok) return { body, ok: true }
+  // Some servers, such as GitHub, return device grant errors with HTTP 200.
+  if (response.ok && typeof body['error'] !== 'string') return { body, ok: true }
   return {
     error: typeof body['error'] === 'string' ? body['error'] : 'server_error',
     errorDescription:

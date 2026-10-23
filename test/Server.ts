@@ -13,7 +13,7 @@ import type { Policy } from 'handshakes/server'
  * Starts the server, registers a public client for the device grant, and returns the server's URL,
  * the client ID, and helpers. Each call has its own in-memory database, so tests share no state.
  */
-export async function create(): Promise<create.ReturnType> {
+export async function create(options: create.Options = {}): Promise<create.ReturnType> {
   const server = Http.createServer()
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
 
@@ -21,17 +21,21 @@ export async function create(): Promise<create.ReturnType> {
   if (!address || typeof address === 'string') throw new Error('Expected a TCP address.')
   const url = `http://127.0.0.1:${address.port}`
 
-  const options = {
+  const config = {
     basePath: '/',
     baseURL: url,
     emailAndPassword: { enabled: true },
     plugins: [
-      jwt({ jwt: { issuer: url } }),
+      // `Resource` accepts RS256 and ES256. Better Auth signs with EdDSA by default.
+      jwt({ jwks: { keyPairConfig: { alg: 'ES256' } }, jwt: { issuer: url } }),
       // Access tokens of the exchange must end before subject tokens of the test issuer, which live for 300 seconds.
       oauthProvider({
         consentPage: '/consent',
         loginPage: '/login',
         m2mAccessTokenExpiresIn: 240,
+        // RFC 8707 resources receive RFC 9068 JWT access tokens.
+        clientRegistrationDefaultResources: options.resources ?? [],
+        resources: [...(options.resources ?? [])],
         scopes: ['data:read', 'data:write', 'email', 'offline_access', 'openid', 'profile'],
       }),
       // The shortest interval keeps device grant tests fast. RFC 8628 defaults to 5 seconds.
@@ -43,8 +47,8 @@ export async function create(): Promise<create.ReturnType> {
   } satisfies BetterAuthOptions
 
   // The memory adapter needs every table of the configuration to exist before the first write.
-  const tables = Object.fromEntries(Object.keys(getSchema(options)).map((name) => [name, []]))
-  const auth = betterAuth({ ...options, database: memoryAdapter(tables) })
+  const tables = Object.fromEntries(Object.keys(getSchema(config)).map((name) => [name, []]))
+  const auth = betterAuth({ ...config, database: memoryAdapter(tables) })
 
   server.on('request', toNodeHandler(auth))
 
@@ -122,6 +126,10 @@ export async function create(): Promise<create.ReturnType> {
 }
 
 export declare namespace create {
+  type Options = {
+    /** RFC 8707 resource identifiers, which receive JWT access tokens. */
+    resources?: readonly string[] | undefined
+  }
   type ReturnType = {
     /** Approves a user code as the signed-in test user, as the device page does. */
     approve: (userCode: string) => Promise<void>

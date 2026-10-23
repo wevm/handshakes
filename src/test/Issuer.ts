@@ -18,11 +18,11 @@ export type Issuer = {
 }
 
 /** Platforms whose claims and endpoints the issuer copies. */
-export type Preset = 'gcp' | 'githubActions' | 'gitlab' | 'vercel'
+export type Preset = 'circleci' | 'gcp' | 'githubActions' | 'gitlab' | 'vercel'
 
 export declare namespace env {
   type Options = {
-    /** `aud` of a token that the environment holds directly (GitLab, Vercel). Default for Vercel: `https://vercel.com/acme`. */
+    /** `aud` of a token that the environment holds directly (CircleCI, GitLab, Vercel). Default for CircleCI: the organization ID. Default for Vercel: `https://vercel.com/acme`. */
     audience?: string | undefined
     preset: Preset
   }
@@ -155,6 +155,15 @@ export async function create(): Promise<Issuer> {
         server.closeAllConnections()
       }),
     async env(options) {
+      if (options.preset === 'circleci')
+        return {
+          CIRCLECI: 'true',
+          CIRCLE_OIDC_TOKEN_V2: await sign({
+            audience: options.audience ?? 'b6a6b6f0-0000-4000-8000-000000000000',
+            preset: 'circleci',
+          }),
+        }
+
       if (options.preset === 'gcp') return { GCE_METADATA_HOST: host, K_SERVICE: 'app' }
 
       if (options.preset === 'githubActions')
@@ -188,6 +197,12 @@ export async function create(): Promise<Issuer> {
 
 /** Claims of each platform, with fixed sample values. */
 const presets: Record<Preset, Readonly<Record<string, unknown>>> = {
+  circleci: {
+    'oidc.circleci.com/project-id': 'c1d2e3f4-0000-4000-8000-000000000000',
+    'oidc.circleci.com/vcs-origin': 'github.com/acme/app',
+    'oidc.circleci.com/vcs-ref': 'refs/heads/main',
+    sub: 'org/b6a6b6f0-0000-4000-8000-000000000000/project/c1d2e3f4-0000-4000-8000-000000000000/user/a1b2c3d4-0000-4000-8000-000000000000',
+  },
   gcp: {
     azp: '104857600000000000000',
     email: 'ci@acme.iam.gserviceaccount.com',

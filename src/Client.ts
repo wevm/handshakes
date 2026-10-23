@@ -335,6 +335,68 @@ export declare namespace create {
   }
 }
 
+/**
+ * Reads the RFC 9728 metadata of an API, then returns a client for the first authorization server
+ * that it names, with the API as the RFC 8707 resource.
+ *
+ * With `url`, it sends one `GET` without credentials and reads `resource_metadata` from the challenge
+ * (RFC 9728 §5). The URL must lie within the resource of the metadata, so an API cannot direct
+ * tokens to another resource.
+ */
+export async function discover(options: discover.Options): Promise<Client> {
+  const fetch = options.fetch ?? globalThis.fetch
+
+  const metadata = await (async () => {
+    if (options.resource !== undefined)
+      return Metadata.protectedResource({ fetch, resource: options.resource })
+
+    const response = await fetch(options.url, { method: 'GET' })
+    await response.body?.cancel()
+    const url = Metadata.challenge(response)?.resourceMetadata
+    if (!url) throw new DiscoveryError({ url: options.url })
+
+    const found = await Metadata.protectedResource({ fetch, url })
+    if (!within(options.url, found.resource)) throw new DiscoveryError({ url: options.url })
+    return found
+  })()
+
+  const issuer = metadata.authorizationServers[0]
+  if (!issuer) throw new DiscoveryError({ url: options.resource ?? options.url })
+
+  const { resource: _, url: __, ...rest } = options
+  return create({ ...rest, fetch, issuer, resource: metadata.resource })
+}
+
+export declare namespace discover {
+  type Options = Omit<create.Options, 'endpoints' | 'issuer' | 'resource'> &
+    (
+      | {
+          /** The resource identifier of the API, such as `https://api.example.com`. */
+          resource: string
+          url?: undefined
+        }
+      | {
+          resource?: undefined
+          /** A URL of the API. Its challenge names the metadata. */
+          url: string
+        }
+    )
+  type ErrorType = DiscoveryError | Metadata.ResourceNotFoundError
+}
+
+/** Thrown when an API names no authorization server, or names metadata of another resource. */
+export class DiscoveryError extends Error {
+  override name = 'Client.DiscoveryError'
+
+  /** The URL or resource of the API. */
+  readonly url: string
+
+  constructor(options: { url: string }) {
+    super(`The API at ${options.url} names no authorization server for itself.`)
+    this.url = options.url
+  }
+}
+
 /** A value, or a function of the detected source, such as the per-provider `audience` of Google STS. */
 export type PerSource<value> = value | ((source: Source.Source) => value)
 
@@ -407,4 +469,14 @@ function printCode(code: DeviceGrant.Code): void {
 /** Returns `process.env` where the runtime has one, else an empty environment. */
 function processEnv(): Source.Env {
   return (globalThis as { process?: { env?: Source.Env } }).process?.env ?? {}
+}
+
+/** Returns whether `url` has the origin of `resource`, and a path at or below its path. */
+function within(url: string, resource: string): boolean {
+  const target = new URL(url)
+  const base = new URL(resource)
+  if (target.origin !== base.origin) return false
+
+  const path = base.pathname.replace(/\/$/, '')
+  return target.pathname === path || target.pathname.startsWith(`${path}/`)
 }

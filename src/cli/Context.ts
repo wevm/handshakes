@@ -1,6 +1,7 @@
 /** @module Builds the client of a CLI run from a profile and flags, and maps library errors to CLI errors. */
 import { z } from 'incur'
 import * as Client from '../Client.js'
+import * as Source from '../node/Source.js'
 import * as Store from '../node/Store.js'
 import * as Profile from './Profile.js'
 
@@ -44,6 +45,7 @@ export function client(input: { args: z.output<typeof args>; options: z.output<t
       issuer: profile.issuer,
       resource: profile.resource,
       scope: profile.scope,
+      sources: Source.defaults,
       store: Store.file(),
     }),
     profile,

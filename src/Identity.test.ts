@@ -28,7 +28,7 @@ describe('token', () => {
     await expect(
       Identity.token({ audience: 'https://api.example.com', env: {} }),
     ).rejects.toThrowErrorMatchingInlineSnapshot(
-      `[Identity.NotFoundError: No source detected its platform for audience https://api.example.com. Checked: vercel, githubActions, gitlab, gcp.]`,
+      `[Identity.NotFoundError: No source detected its platform for audience https://api.example.com. Checked: vercel, githubActions, gitlab, circleci, gcp.]`,
     )
   })
 

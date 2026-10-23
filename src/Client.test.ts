@@ -1,6 +1,6 @@
 /** @module Resolves access tokens through stored grants and the device grant, against a local Better Auth server. */
 import { Client, Store } from 'handshakes'
-import { Policy, Server as ExchangeServer } from 'handshakes/server'
+import { Policy, Resource, Server as ExchangeServer } from 'handshakes/server'
 import { Issuer } from 'handshakes/test'
 import * as Http from '../test/Http.js'
 import * as Server from '../test/Server.js'
@@ -189,6 +189,7 @@ describe('status', () => {
           "vercel",
           "githubActions",
           "gitlab",
+          "circleci",
           "gcp",
         ],
         "interactive": false,
@@ -285,6 +286,58 @@ describe('with a subject token', () => {
 
     await expect(client.token()).rejects.toThrowErrorMatchingInlineSnapshot(
       `[Exchange.RejectedError: The server rejected the token exchange: invalid_grant (The subject token matches no trust policy.).]`,
+    )
+  })
+})
+
+describe('discover', () => {
+  let api: Awaited<ReturnType<typeof Http.serve>>
+
+  beforeAll(async () => {
+    api = await Http.serve((url) => {
+      const items = Resource.create({
+        authorizationServers: [server.url],
+        resource: `${url}/items`,
+      })
+      const admin = Resource.create({
+        authorizationServers: [server.url],
+        resource: `${url}/admin`,
+      })
+      return async (request) => {
+        const path = new URL(request.url).pathname
+        if (request.url === items.metadataUrl) return items.metadata()
+        if (request.url === admin.metadataUrl) return admin.metadata()
+        // `/other` names the metadata of `/admin`, so a client must not send it a token for `/admin`.
+        if (path.startsWith('/other')) return admin.challenge({ status: 'invalid' })
+        return items.challenge({ status: 'invalid' })
+      }
+    })
+  })
+
+  afterAll(async () => {
+    await api.close()
+  })
+
+  test('creates a client for the authorization server of the resource', async () => {
+    const client = await Client.discover({ env: {}, resource: `${api.url}/items` })
+
+    const error = await client.token().catch((error: unknown) => error)
+
+    expect(error).toBeInstanceOf(Client.AuthorizationRequiredError)
+    expect(
+      (error as Client.AuthorizationRequiredError).issuer === server.url,
+    ).toMatchInlineSnapshot(`true`)
+  })
+
+  test('reads the metadata that the challenge of a URL names', async () => {
+    const client = await Client.discover({ env: {}, url: `${api.url}/items/1` })
+
+    expect((await client.status()).method).toMatchInlineSnapshot(`"none"`)
+  })
+
+  test('throws when the challenge names the metadata of another resource', async () => {
+    await expect(Client.discover({ env: {}, url: `${api.url}/other/1` })).rejects.toThrow(
+      Client.DiscoveryError,
     )
   })
 })

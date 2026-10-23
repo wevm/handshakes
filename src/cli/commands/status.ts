@@ -1,7 +1,7 @@
 /** @module The `status` command: names the method that applies here. Never prints a token. */
 import { Cli, z } from 'incur'
 import * as Identity from '../../Identity.js'
-import * as Source from '../../Source.js'
+import * as Source from '../../node/Source.js'
 import * as Context from '../Context.js'
 import * as Profile from '../Profile.js'
 
@@ -14,7 +14,7 @@ export default Cli.command({
     try {
       const source = {
         checked: Source.defaults.map((entry) => entry.name),
-        source: Identity.detect()?.name ?? null,
+        source: Identity.detect({ sources: Source.defaults })?.name ?? null,
       }
       if (!Profile.resolve({ name: c.args.profile, overrides: c.options })) return source
 

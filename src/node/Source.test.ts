@@ -1,10 +1,39 @@
-/** @module Reads subject tokens from files, as Kubernetes projects them. */
+/** @module Reads subject tokens from files, as Kubernetes projects them, and from the Buildkite agent. */
 import * as Fs from 'node:fs'
 import * as Os from 'node:os'
 import * as Path from 'node:path'
 import { Identity } from 'handshakes'
 import { Source } from 'handshakes/node'
 import { Issuer } from 'handshakes/test'
+
+describe('buildkite', () => {
+  test('throws with a hint when the job has no agent', async () => {
+    await expect(
+      Identity.token({
+        audience: 'https://api.example.com',
+        env: { BUILDKITE: 'true', PATH: '' },
+        sources: [Source.buildkite()],
+      }),
+    ).rejects.toThrowErrorMatchingInlineSnapshot(
+      `[Source.RequestError: buildkite-agent did not return an OIDC token. Run the job on a Buildkite agent, which provides \`buildkite-agent\`.]`,
+    )
+  })
+})
+
+describe('defaults', () => {
+  test('adds buildkite to the defaults of the core entry, before gcp', () => {
+    expect(Source.defaults.map((source) => source.name)).toMatchInlineSnapshot(`
+      [
+        "vercel",
+        "githubActions",
+        "gitlab",
+        "circleci",
+        "buildkite",
+        "gcp",
+      ]
+    `)
+  })
+})
 
 describe('file', () => {
   let directory: string

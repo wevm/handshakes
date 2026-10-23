@@ -3,7 +3,9 @@ import * as ChildProcess from 'node:child_process'
 import * as Fs from 'node:fs'
 import * as Path from 'node:path'
 import * as Esbuild from 'esbuild'
+import { Policy, Resource } from 'handshakes/server'
 import { Issuer } from 'handshakes/test'
+import * as Http from '../../test/Http.js'
 import * as Server from '../../test/Server.js'
 
 describe('handshakes', () => {
@@ -66,6 +68,7 @@ describe('handshakes', () => {
       Commands:
         authorize  Runs the device grant (RFC 8628) and stores the grant. Alias: login.
         exec       Runs the command after \`--\` with an access token in an environment variable, then exits with its code.
+        fetch      Sends a request with an access token, and prints the response body. Without a profile, discovers the authorization server from the API.
         login      Runs the device grant (RFC 8628) and stores the grant. Alias: login.
         logout     Revokes the refresh token (RFC 7009) and deletes the stored grant. Alias: logout.
         profiles   Lists the profiles, the file of each, and the default profile.
@@ -125,6 +128,8 @@ describe('handshakes', () => {
             "vercel",
             "githubActions",
             "gitlab",
+            "circleci",
+            "buildkite",
             "gcp",
           ],
           "source": "githubActions",
@@ -139,7 +144,7 @@ describe('handshakes', () => {
     expect(result.status).toMatchInlineSnapshot(`3`)
     expect(result.stdout + result.stderr).toMatchInlineSnapshot(`
       "code: SOURCE_NOT_FOUND
-      message: "No source detected its platform for audience https://api.example.com. Checked: vercel, githubActions, gitlab, gcp."
+      message: "No source detected its platform for audience https://api.example.com. Checked: vercel, githubActions, gitlab, circleci, buildkite, gcp."
       "
     `)
   })
@@ -226,6 +231,8 @@ describe('handshakes', () => {
             "vercel",
             "githubActions",
             "gitlab",
+            "circleci",
+            "buildkite",
             "gcp",
           ],
           "grant": {
@@ -283,6 +290,158 @@ describe('handshakes', () => {
         message: No profile is named missing.
         "
       `)
+    })
+  })
+
+  describe('with an API that uses Resource', () => {
+    let api: Awaited<ReturnType<typeof Http.serve>>
+    let env: Record<string, string>
+    let issuer: Issuer.Issuer
+    let server: Server.create.ReturnType
+
+    beforeAll(async () => {
+      let resource: Resource.Resource | undefined
+      issuer = await Issuer.create()
+      api = await Http.serve(() => async (request) => {
+        if (!resource) return new Response(null, { status: 503 })
+        if (request.url === resource.metadataUrl) return resource.metadata()
+
+        const result = await resource.verify(request)
+        if (result.status === 'invalid') return resource.challenge(result)
+        if (new URL(request.url).pathname !== '/v1/items')
+          return new Response(null, { status: 404 })
+        return Response.json({
+          items: [],
+          method: request.method,
+          subject: result.principal.subject,
+        })
+      })
+      server = await Server.create({ resources: [`${api.url}/v1`] })
+      await server.trust(
+        Policy.githubActions({
+          audience: server.url,
+          issuer: issuer.url,
+          repositoryId: '812345',
+          scopes: ['data:read'],
+        }),
+      )
+      resource = Resource.create({
+        authorizationServers: [server.url],
+        resource: `${api.url}/v1`,
+        scopes: ['data:read'],
+      })
+
+      // No profile applies: no project file, and an empty user configuration.
+      env = {
+        ...(await issuer.env({ preset: 'githubActions' })),
+        XDG_CONFIG_HOME: Path.join(dir, 'empty'),
+      }
+    })
+
+    afterAll(async () => {
+      await Promise.all([api.close(), issuer.close(), server.close()])
+    })
+
+    test('fetch discovers the authorization server and sends the access token', async () => {
+      const result = await run(['fetch', `${api.url}/v1/items`], env)
+
+      expect(result.status).toMatchInlineSnapshot(`0`)
+      expect(JSON.parse(result.stdout)).toMatchInlineSnapshot(
+        { subject: expect.any(String) },
+        `
+        {
+          "items": [],
+          "method": "GET",
+          "subject": Any<String>,
+        }
+      `,
+      )
+    })
+
+    test('fetch sends the method, headers, and body', async () => {
+      const result = await run(
+        [
+          'fetch',
+          `${api.url}/v1/items`,
+          '-X',
+          'PUT',
+          '-H',
+          'content-type: application/json',
+          '-d',
+          '{}',
+          '--json',
+        ],
+        env,
+      )
+
+      expect(result.status).toMatchInlineSnapshot(`0`)
+      expect(JSON.parse(JSON.parse(result.stdout).body).method).toMatchInlineSnapshot(`"PUT"`)
+    })
+
+    test('fetch --fail exits with 22 on HTTP 404', async () => {
+      const result = await run(['fetch', `${api.url}/v1/missing`, '--fail'], env)
+
+      expect(result.status).toMatchInlineSnapshot(`22`)
+    })
+
+    test('fetch exits with 3 when no source detects its platform', async () => {
+      const result = await run(['fetch', `${api.url}/v1/items`], {
+        XDG_CONFIG_HOME: Path.join(dir, 'empty'),
+      })
+
+      expect(result.status).toMatchInlineSnapshot(`3`)
+    })
+
+    test('--mcp serves fetch and status, and no token tool', async () => {
+      const child = ChildProcess.spawn(process.execPath, [bin, '--mcp'], {
+        env: { PATH: process.env['PATH'] ?? '', ...env },
+      })
+      const responses = new Map<number, (message: Record<string, unknown>) => void>()
+      let buffer = ''
+      child.stdout.on('data', (chunk: Buffer) => {
+        buffer += chunk
+        for (let index = buffer.indexOf('\n'); index !== -1; index = buffer.indexOf('\n')) {
+          const message = JSON.parse(buffer.slice(0, index)) as Record<string, unknown>
+          buffer = buffer.slice(index + 1)
+          responses.get(message['id'] as number)?.(message)
+        }
+      })
+
+      /** Sends a JSON-RPC request over stdio, and returns its result. */
+      let id = 0
+      function call(method: string, params: Record<string, unknown> = {}) {
+        id += 1
+        const current = id
+        return new Promise<Record<string, unknown>>((resolve) => {
+          responses.set(current, (message) => resolve(message['result'] as Record<string, unknown>))
+          child.stdin.write(`${JSON.stringify({ id: current, jsonrpc: '2.0', method, params })}\n`)
+        })
+      }
+
+      await call('initialize', {
+        capabilities: {},
+        clientInfo: { name: 'test', version: '0.0.0' },
+        protocolVersion: '2025-06-18',
+      })
+      child.stdin.write(
+        `${JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' })}\n`,
+      )
+
+      const tools = await call('tools/list')
+      const result = await call('tools/call', {
+        arguments: { url: `${api.url}/v1/items` },
+        name: 'fetch',
+      })
+      child.kill()
+
+      expect((tools['tools'] as { name: string }[]).map((tool) => tool.name))
+        .toMatchInlineSnapshot(`
+        [
+          "fetch",
+          "status",
+        ]
+      `)
+      expect(JSON.stringify(result).includes('"status\\":200')).toMatchInlineSnapshot(`true`)
     })
   })
 })

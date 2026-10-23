@@ -1,6 +1,6 @@
 # Handshakes implementation plan
 
-Status: phases 0 to 3 done, except manual and external checks: Vercel AI Gateway (phase 1), Google OAuth (phase 2), and Google STS and OpenRouter (phase 3). Phase 4 is next.
+Status: phases 0 to 4 done, except manual and external checks: Vercel AI Gateway (phase 1), Google OAuth (phase 2), Google STS and OpenRouter (phase 3), and CircleCI, Buildkite, and a GitHub App device flow (phase 4). `Store.keychain` is deferred (see Risks). Phase 5 is next.
 
 Handshakes is an OAuth client library and CLI that replaces stored API keys with short-lived access tokens.
 
@@ -222,15 +222,25 @@ type Client = {
   token: () => Promise<AccessToken>
 }
 
-/** Reads the RFC 9728 metadata of an API, then creates a client for the authorization server that it names. */
+/** Reads the RFC 9728 metadata of an API, then creates a client for the first authorization server that it names. */
 declare function discover(options: discover.Options): Promise<Client>
 
 declare namespace discover {
-  type Options = Omit<create.Options, 'endpoints' | 'issuer' | 'resource'> & {
-    /** The protected API, such as `https://api.example.com`. */
-    resource: string
-  }
+  type Options = Omit<create.Options, 'endpoints' | 'issuer' | 'resource'> &
+    (
+      | { /** The resource identifier, such as `https://api.example.com`. */ resource: string }
+      | {
+          /** A URL of the API. One `GET` without credentials reads `resource_metadata` from its challenge. */ url: string
+        }
+    )
 }
+```
+
+- With `url`, the URL must lie within the `resource` of the metadata: the same origin, and a path at or below its path. Otherwise `Client.DiscoveryError`, so an API cannot direct a token to another resource.
+- The client uses the `resource` of the metadata as its RFC 8707 resource.
+
+```ts
+
 ```
 
 ### `Identity`
@@ -374,7 +384,7 @@ declare namespace request {
 ```ts
 // RFC 8414 and RFC 9728
 Metadata.authorizationServer(options: { fetch?; issuer: string }): Promise<AuthorizationServer>
-Metadata.protectedResource(options: { fetch?; resource: string }): Promise<ProtectedResource>
+Metadata.protectedResource(options: { fetch?; resource: string; url? } | { fetch?; url: string }): Promise<ProtectedResource>
 /** Parses `WWW-Authenticate`: `resource_metadata`, `scope`, and `error`. */
 Metadata.challenge(response: Response): Challenge | undefined
 ```
@@ -438,6 +448,7 @@ type Token = {
 | Error                               | Thrown when                                                                                           | Fields                                |
 | ----------------------------------- | ----------------------------------------------------------------------------------------------------- | ------------------------------------- |
 | `Client.AuthorizationRequiredError` | No source detects, no grant is stored, and the client is not interactive                              | `issuer`                              |
+| `Client.DiscoveryError`             | The API names no authorization server, or its challenge names the metadata of another resource        | `url`                                 |
 | `DeviceGrant.DeniedError`           | The user denies the code                                                                              |                                       |
 | `DeviceGrant.ExpiredError`          | The code expires before approval                                                                      |                                       |
 | `Client.RejectedError`              | The token or revocation endpoint returns an RFC 6749 §5.2 error other than `invalid_grant` on refresh | `error`, `errorDescription`, `status` |
@@ -447,7 +458,8 @@ type Token = {
 | `Grant.InvalidResponseError`        | A token response has no `access_token` or `expires_in`                                                |                                       |
 | `Identity.AudienceError`            | A token with a fixed audience has another `aud`                                                       | `expected`, `received`, `source`      |
 | `Identity.NotFoundError`            | No source detects                                                                                     | `audience`, `checked`                 |
-| `Metadata.NotFoundError`            | The issuer or resource serves no metadata                                                             | `url`                                 |
+| `Metadata.NotFoundError`            | The issuer serves no metadata                                                                         | `issuer`                              |
+| `Metadata.ResourceNotFoundError`    | The resource serves no metadata, or metadata of another resource                                      | `resource`                            |
 | `Source.RequestError`               | The detected source fails. The hint states the fix, such as `permissions: id-token: write`            | `hint`, `source`                      |
 | `Store.LockTimeoutError`            | Another process holds the lock of `Store.file` past `lockTimeout`                                     | `key`                                 |
 
@@ -601,7 +613,7 @@ declare namespace create {
     /** Issuers whose RFC 9068 access tokens the API accepts. */
     authorizationServers?: readonly string[] | undefined
     fetch?: typeof globalThis.fetch | undefined
-    /** Platform subject tokens that the API accepts without an exchange. */
+    /** Platform subject tokens that the API accepts without an exchange. The audience of each must be `resource`. */
     policies?: readonly Policy[] | undefined
     /** The API itself. Every accepted token has it as `aud`. */
     resource: string
@@ -611,17 +623,20 @@ declare namespace create {
 }
 
 type Resource = {
-  /** Returns the `401` response with the RFC 6750 and RFC 9728 `WWW-Authenticate` header. */
+  /** Returns `403` for `insufficient_scope`, else `401`, with the RFC 6750 and RFC 9728 `WWW-Authenticate` header. */
   challenge: (result: Invalid) => Response
   /** Returns the RFC 9728 metadata response. */
   metadata: () => Response
+  /** The well-known URL of the metadata (RFC 9728 §3.1). */
+  metadataUrl: string
   /** Verifies the bearer token of the request. Never throws for a bad token. */
   verify: (request: Request) => Promise<Valid | Invalid>
 }
 
 type Valid = { principal: Principal; status: 'valid' }
 type Invalid = {
-  error: 'insufficient_scope' | 'invalid_request' | 'invalid_token'
+  /** Absent when the request has no credentials (RFC 6750 §3.1). */
+  error?: 'insufficient_scope' | 'invalid_request' | 'invalid_token' | undefined
   status: 'invalid'
 }
 
@@ -637,6 +652,7 @@ type Principal = {
 ```
 
 - An access token needs `typ: at+jwt`, so an ID token signed with the same key does not pass.
+- A token whose `iss` is in `authorizationServers` must be an access token. Other tokens go to `policies`, so an issuer belongs to one list.
 - `aud` must equal `resource` exactly. An authorization server that issues one `aud` for every API does not meet this, and needs RFC 8707 resources.
 
 #### `Policy`
@@ -814,10 +830,10 @@ $ handshakes fetch https://api.example.com/v1/items --fail
 
 ### MCP tools
 
-| Tool     | Input                                         | Output                      |
-| -------- | --------------------------------------------- | --------------------------- |
-| `fetch`  | `profile`, `url`, `method`, `headers`, `body` | `status`, `headers`, `body` |
-| `status` | `profile`                                     | `Status`                    |
+| Tool     | Input                                        | Output                      |
+| -------- | -------------------------------------------- | --------------------------- |
+| `fetch`  | `profile`, `url`, `method`, `header`, `data` | `status`, `headers`, `body` |
+| `status` | `profile`                                    | `Status`                    |
 
 There is no `token` tool, so a token never enters the context of a model.
 
@@ -955,3 +971,6 @@ Done when `handshakes fetch` works without a profile against an API that uses `R
 - `Source.vercel` calls `https://oidc.vercel.com/~token` directly. If Vercel changes that endpoint, follow `@vercel/oidc`, which documents it in code only.
 - `exec` puts the token in the environment of the child, which other processes of the same user can read. This is acceptable for a token that expires in minutes.
 - Google refresh tokens do not rotate, so only the local server exercises the refresh race.
+- Better Auth's `jwt` plugin signs with EdDSA by default, and `Resource` accepts RS256 and ES256 only. A Better Auth host sets `jwks.keyPairConfig.alg` to `ES256` or `RS256`, as the test server does. Adding EdDSA (WebCrypto Ed25519) is an open question.
+- `Store.keychain` is deferred. macOS `security add-generic-password` reads the secret from argv or a TTY prompt, and other users' processes can read argv. Linux `secret-tool` reads stdin. Neither runs in this repository's CI.
+- GitHub returns device grant errors with HTTP 200. `OAuth.post` treats a response with `error` as an error. GitHub App user tokens refresh only with a client secret, so without one the client runs the device grant again after 8 hours.

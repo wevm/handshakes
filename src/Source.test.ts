@@ -15,6 +15,40 @@ afterAll(async () => {
   await issuer.close()
 })
 
+describe('circleci', () => {
+  const organization = 'b6a6b6f0-0000-4000-8000-000000000000'
+
+  test('reads the token of the job, whose audience is the organization', async () => {
+    const env = await issuer.env({ preset: 'circleci' })
+
+    const token = await Identity.token({
+      audience: organization,
+      env,
+      sources: [Source.circleci()],
+    })
+
+    expect(token.claims['oidc.circleci.com/project-id']).toMatchInlineSnapshot(
+      `"c1d2e3f4-0000-4000-8000-000000000000"`,
+    )
+  })
+
+  test('throws before it sends a token for another audience', async () => {
+    const env = await issuer.env({ preset: 'circleci' })
+
+    await expect(Identity.token({ audience, env, sources: [Source.circleci()] })).rejects.toThrow(
+      Identity.AudienceError,
+    )
+  })
+
+  test('throws when the job has no token', async () => {
+    await expect(
+      Identity.token({ audience, env: { CIRCLECI: 'true' }, sources: [Source.circleci()] }),
+    ).rejects.toThrowErrorMatchingInlineSnapshot(
+      `[Source.RequestError: CIRCLE_OIDC_TOKEN_V2 is not set. Check that CircleCI issues OIDC tokens to this job.]`,
+    )
+  })
+})
+
 describe('gcp', () => {
   test('requests a token from the metadata server', async () => {
     const env = await issuer.env({ preset: 'gcp' })

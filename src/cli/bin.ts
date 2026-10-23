@@ -3,6 +3,7 @@
 import { Cli } from 'incur'
 import authorize from './commands/authorize.js'
 import * as Exec from './commands/exec.js'
+import fetch from './commands/fetch.js'
 import profiles from './commands/profiles.js'
 import revoke from './commands/revoke.js'
 import status from './commands/status.js'
@@ -15,11 +16,14 @@ const separator = argv.indexOf('--')
 const cli = Cli.create('handshakes', {
   description:
     'Resolves short-lived OAuth access tokens from the platform identity or a stored grant, in place of stored API keys.',
+  // An agent receives responses and status, never a token, so only these two commands are tools.
+  mcp: { tools: { discovery: 'direct', include: ['fetch', 'status'] } },
   // The CLI runs in CI and on servers, so Incur's background update check stays off.
   update: false,
 })
   .command('authorize', authorize)
   .command('exec', Exec.create({ command: separator === -1 ? [] : argv.slice(separator + 1) }))
+  .command('fetch', fetch)
   .command('login', authorize)
   .command('logout', revoke)
   .command('profiles', profiles)
