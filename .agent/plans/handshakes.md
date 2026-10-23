@@ -135,17 +135,17 @@ Only steps 1 to 3 change between platforms.
 
 One package, `handshakes`, with five entries and a bin.
 
-| Entry                    | Contents                                                                       |
-| ------------------------ | ------------------------------------------------------------------------------ |
-| `handshakes`             | `Client`, `DeviceGrant`, `Exchange`, `Identity`, `Metadata`, `Source`, `Store` |
-| `handshakes/server`      | `Policy`, `Resource`, `Server`                                                 |
-| `handshakes/better-auth` | `tokenExchange`                                                                |
-| `handshakes/node`        | `NodeSource`, `NodeStore` (`file`, and `keychain` in phase 4)                  |
-| `handshakes/test`        | `Issuer`                                                                       |
-| bin `handshakes`         | The CLI                                                                        |
+| Entry                    | Contents                                                                         |
+| ------------------------ | -------------------------------------------------------------------------------- |
+| `handshakes`             | `Client`, `DeviceGrant`, `Exchange`, `Identity`, `Metadata`, `Source`, `Store`   |
+| `handshakes/server`      | `Policy`, `Resource`, `Server`                                                   |
+| `handshakes/better-auth` | `tokenExchange`                                                                  |
+| `handshakes/node`        | `Source` and `Store`, with `file` now, and `buildkite` and `keychain` in phase 4 |
+| `handshakes/test`        | `Issuer`                                                                         |
+| bin `handshakes`         | The CLI                                                                          |
 
 - The core entry has no dependencies. It runs in Node, Bun, Deno, and edge runtimes.
-- `handshakes/node` uses `fs` and child processes.
+- `handshakes/node` uses `fs` and child processes. Its `Source` and `Store` add to the namespaces of the same name in the core entry. A module that imports both renames one, such as `Store as NodeStore`.
 - `handshakes/server` has no dependencies. It verifies RS256 and ES256 signatures with WebCrypto, so it runs on edge runtimes too.
 - `better-auth` and `@better-auth/oauth-provider` are optional peers.
 
@@ -278,10 +278,11 @@ type Source = {
 | `Source.gitlab()`        | `GITLAB_CI`                   | Reads `<AUD>_ID_TOKEN`, or the `variable` option                                                                                       | Fixed in `id_tokens` of `.gitlab-ci.yml` |
 | `Source.circleci()`      | `CIRCLECI`                    | Reads `CIRCLE_OIDC_TOKEN_V2`                                                                                                           | Fixed                                    |
 | `Source.gcp()`           | `K_SERVICE`                   | Metadata server, `…/service-accounts/default/identity?audience=`                                                                       | Any                                      |
-| `NodeSource.buildkite()` | `BUILDKITE`                   | `buildkite-agent oidc request-token --audience`                                                                                        | Any                                      |
-| `NodeSource.file()`      | The file exists               | Reads a projected token, such as a Kubernetes service account token                                                                    | Fixed in the pod spec                    |
+| `Source.buildkite()`     | `BUILDKITE`                   | `buildkite-agent oidc request-token --audience`                                                                                        | Any                                      |
+| `Source.file()`          | The file exists               | Reads a projected token, such as a Kubernetes service account token                                                                    | Fixed in the pod spec                    |
 
-- `Source.defaults` is `[vercel, githubActions, gitlab, circleci, gcp]`, in priority order. `NodeSource.defaults` adds `buildkite`.
+- `Source.buildkite` and `Source.file` are in `handshakes/node`.
+- `Source.defaults` is `[vercel, githubActions, gitlab, circleci, gcp]`, in priority order. `Source.defaults` of `handshakes/node` adds `buildkite`.
 - `Source.from(source)` types a custom source.
 - For a source with a fixed audience, the client decodes the token and compares `aud` with the requested audience. A mismatch throws `Identity.AudienceError`, and the token is not sent.
 - `Source.vercel` returns the token without an exchange when its `aud` already matches, such as `https://vercel.com/<team>` for AI Gateway. It implements the request header and the audience exchange itself, with no `@vercel/oidc` peer, so `env` and `fetch` stay injectable. The token file (`VERCEL_OIDC_TOKEN_FILE`) is left for `handshakes/node`.
@@ -303,12 +304,12 @@ type Store = {
 }
 ```
 
-| Store                                          | Entry             | Behavior                                                                                                                            |
-| ---------------------------------------------- | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| `Store.memory()`                               | `handshakes`      | One process only                                                                                                                    |
-| `Store.from(store)`                            | `handshakes`      | Types a custom store                                                                                                                |
-| `NodeStore.file({ directory?, lockTimeout? })` | `handshakes/node` | Default directory `~/.config/handshakes/grants`. Mode 0600, atomic writes, a lock file with a stale timeout, a read after each lock |
-| `NodeStore.keychain({ service? })`             | `handshakes/node` | macOS `security`, Linux `secret-tool`                                                                                               |
+| Store                                      | Entry             | Behavior                                                                                                                            |
+| ------------------------------------------ | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `Store.memory()`                           | `handshakes`      | One process only                                                                                                                    |
+| `Store.from(store)`                        | `handshakes`      | Types a custom store                                                                                                                |
+| `Store.file({ directory?, lockTimeout? })` | `handshakes/node` | Default directory `~/.config/handshakes/grants`. Mode 0600, atomic writes, a lock file with a stale timeout, a read after each lock |
+| `Store.keychain({ service? })`             | `handshakes/node` | macOS `security`, Linux `secret-tool`                                                                                               |
 
 The store key is the issuer and the client ID.
 
@@ -448,7 +449,7 @@ type Token = {
 | `Identity.NotFoundError`            | No source detects                                                                                     | `audience`, `checked`                 |
 | `Metadata.NotFoundError`            | The issuer or resource serves no metadata                                                             | `url`                                 |
 | `Source.RequestError`               | The detected source fails. The hint states the fix, such as `permissions: id-token: write`            | `hint`, `source`                      |
-| `NodeStore.LockTimeoutError`        | Another process holds the lock past `lockTimeout`                                                     | `key`                                 |
+| `Store.LockTimeoutError`            | Another process holds the lock of `Store.file` past `lockTimeout`                                     | `key`                                 |
 
 ### `handshakes/test`
 
@@ -833,7 +834,7 @@ No mocks, stubs, or stubbed globals. Every test runs against a real server or a 
 | Exchange                      | `Server` behind a local HTTP server, and the local Better Auth server with `handshakes/better-auth`, both fed by the test issuer |
 | Resource                      | `Resource` against tokens of the local Better Auth server and of the test issuer                                                 |
 | Interoperability              | Google STS from GitHub Actions in CI. Google OAuth by hand. OpenRouter when a Business plan is available                         |
-| Races                         | Several processes that share one `NodeStore.file`                                                                                |
+| Races                         | Several processes that share one `Store.file`                                                                                    |
 | CLI                           | The built bin against the local server                                                                                           |
 
 `test/Server.ts` starts the local Better Auth server on a random port. A test approves a user code through the server's own approval endpoint, as a signed-in test user.
@@ -851,7 +852,7 @@ Done when `pnpm check` and `pnpm test` pass, with one test that reads the metada
 ### Phase 1: subject tokens
 
 - `Identity.token` and `Identity.detect`.
-- `Source.githubActions`, `Source.vercel`, `Source.gitlab`, `Source.gcp`, `Source.from`, and `NodeSource.file`.
+- `Source.githubActions`, `Source.vercel`, `Source.gitlab`, `Source.gcp`, `Source.from`, and `Source.file` of `handshakes/node`.
 - The `aud` check for fixed audiences, and no fall-through after a detected source fails.
 - `handshakes/test`: `Issuer.create`, `sign`, `env`, and `close`, with the `githubActions` and `vercel` presets.
 - CLI: `token --audience`, and `status` for sources, both with `--json`.
@@ -864,7 +865,7 @@ Done when a GitHub Actions job verifies its own token against the JWKS of GitHub
 - `DeviceGrant.start` and `wait`, with `interval`, `slow_down`, `expired_token`, and `access_denied`.
 - `Client.create` with steps 2 to 4 of the resolution order: `token`, `fetch`, `authorize`, `revoke`, `status`, and `invalidate`.
 - The cache, with one request in flight for each client.
-- `Store.memory`, `Store.from`, and `NodeStore.file`.
+- `Store.memory`, `Store.from`, and `Store.file` of `handshakes/node`.
 - CLI: `authorize`, `revoke`, `status`, `token [profile]`, `exec`, `profiles`, and the profile files.
 
 Tests:
@@ -915,8 +916,8 @@ Done when a CI workflow with no secrets calls a protected API, and the same code
 - `Resource.create`: `verify`, `metadata`, and `challenge`.
 - `Metadata.protectedResource`, `Metadata.challenge`, and `Client.discover`.
 - CLI: `fetch`, and `--mcp` with `fetch` and `status`.
-- `Source.circleci` and `NodeSource.buildkite`.
-- `NodeStore.keychain`.
+- `Source.circleci`, and `Source.buildkite` of `handshakes/node`.
+- `Store.keychain` of `handshakes/node`.
 - GitHub App device flow, which has no metadata and needs `endpoints`.
 
 Done when `handshakes fetch` works without a profile against an API that uses `Resource`, and an agent calls it through MCP.

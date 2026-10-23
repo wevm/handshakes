@@ -116,7 +116,7 @@ The examples below use `auth.example.com` as the authorization server, and `api.
 
 ```ts
 import { Client } from 'handshakes'
-import { NodeStore } from 'handshakes/node'
+import { Store } from 'handshakes/node'
 
 const client = Client.create({
   // OAuth client for the device grant. Required on a laptop only.
@@ -124,7 +124,7 @@ const client = Client.create({
   issuer: 'https://auth.example.com',
   scope: 'data:read',
   // Keeps the grant in `~/.config/handshakes/grants`, shared by every process.
-  store: NodeStore.file(),
+  store: Store.file(),
 })
 
 // Sends the request with `Authorization: Bearer`.

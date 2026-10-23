@@ -3,7 +3,7 @@ import * as Fs from 'node:fs'
 import * as Os from 'node:os'
 import * as Path from 'node:path'
 import { Identity } from 'handshakes'
-import { NodeSource } from 'handshakes/node'
+import { Source } from 'handshakes/node'
 import { Issuer } from 'handshakes/test'
 
 describe('file', () => {
@@ -30,7 +30,7 @@ describe('file', () => {
     const token = await Identity.token({
       audience: 'https://api.example.com',
       env: {},
-      sources: [NodeSource.file({ name: 'kubernetes', path })],
+      sources: [Source.file({ name: 'kubernetes', path })],
     })
 
     expect(token.source).toMatchInlineSnapshot(`"kubernetes"`)
@@ -41,7 +41,7 @@ describe('file', () => {
       Identity.token({
         audience: 'https://api.example.com',
         env: {},
-        sources: [NodeSource.file({ path: Path.join(directory, 'missing') })],
+        sources: [Source.file({ path: Path.join(directory, 'missing') })],
       }),
     ).rejects.toThrowErrorMatchingInlineSnapshot(
       `[Identity.NotFoundError: No source detected its platform for audience https://api.example.com. Checked: file.]`,

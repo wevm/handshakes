@@ -96,7 +96,7 @@ export declare namespace file {
 
 /** Thrown when another process holds the lock longer than `lockTimeout`. */
 export class LockTimeoutError extends Error {
-  override name = 'NodeStore.LockTimeoutError'
+  override name = 'Store.LockTimeoutError'
 
   /** The store key. */
   readonly key: string
