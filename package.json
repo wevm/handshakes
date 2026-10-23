@@ -1,0 +1,84 @@
+{
+  "scripts": {
+    "build": "zile",
+    "changeset:publish": "zile publish:prepare && changeset publish && zile publish:post",
+    "changeset:version": "changeset version",
+    "check": "vp check --fix",
+    "check:types": "tsc",
+    "dev": "zile dev",
+    "postinstall": "zile dev",
+    "test": "vp test"
+  },
+  "devDependencies": {
+    "@better-auth/oauth-provider": "catalog:",
+    "@changesets/cli": "catalog:",
+    "@types/node": "catalog:",
+    "better-auth": "catalog:",
+    "esbuild": "catalog:",
+    "typescript": "catalog:",
+    "vite-plus": "catalog:",
+    "zile": "catalog:"
+  },
+  "packageManager": "pnpm@11.25.0",
+  "[!start-pkg]": "",
+  "name": "handshakes",
+  "description": "Short-lived OAuth tokens for workloads and CLIs, in place of stored API keys.",
+  "type": "module",
+  "version": "0.0.0",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/wevm/handshakes.git"
+  },
+  "sideEffects": false,
+  "bin": {
+    "handshakes": "./dist/cli/bin.js",
+    "handshakes.src": "./src/cli/bin.ts"
+  },
+  "main": "./dist/index.js",
+  "exports": {
+    ".": {
+      "src": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./better-auth": {
+      "src": "./src/better-auth/index.ts",
+      "types": "./dist/better-auth/index.d.ts",
+      "default": "./dist/better-auth/index.js"
+    },
+    "./node": {
+      "src": "./src/node/index.ts",
+      "types": "./dist/node/index.d.ts",
+      "default": "./dist/node/index.js"
+    },
+    "./test": {
+      "src": "./src/test/index.ts",
+      "types": "./dist/test/index.d.ts",
+      "default": "./dist/test/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "!src/**/*.test-d.ts",
+    "!src/**/*.test.ts"
+  ],
+  "dependencies": {
+    "incur": "catalog:"
+  },
+  "peerDependencies": {
+    "@better-auth/oauth-provider": "catalog:",
+    "better-auth": "catalog:"
+  },
+  "peerDependenciesMeta": {
+    "@better-auth/oauth-provider": {
+      "optional": true
+    },
+    "better-auth": {
+      "optional": true
+    }
+  },
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts"
+}

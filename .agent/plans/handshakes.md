@@ -88,28 +88,28 @@ Only steps 1 to 3 change between platforms.
 
 ## Standards
 
-| Standard                 | Use                                  | Phase |
-| ------------------------ | ------------------------------------ | ----- |
-| RFC 8414, OIDC discovery | Endpoint discovery                   | 2     |
-| RFC 8628                 | `authorize` on a laptop              | 2     |
-| RFC 6749 refresh grant   | Keeping a stored grant current       | 2     |
-| RFC 7009                 | `revoke`                             | 2     |
-| RFC 8693                 | Token exchange, client and server    | 3     |
-| RFC 8707                 | `resource`                           | 3     |
+| Standard                 | Use                                   | Phase |
+| ------------------------ | ------------------------------------- | ----- |
+| RFC 8414, OIDC discovery | Endpoint discovery                    | 2     |
+| RFC 8628                 | `authorize` on a laptop               | 2     |
+| RFC 6749 refresh grant   | Keeping a stored grant current        | 2     |
+| RFC 7009                 | `revoke`                              | 2     |
+| RFC 8693                 | Token exchange, client and server     | 3     |
+| RFC 8707                 | `resource`                            | 3     |
 | RFC 9728                 | `Client.discover`, `handshakes fetch` | 4     |
-| RFC 9449 (DPoP)          | Grants bound to a key                | 5     |
+| RFC 9449 (DPoP)          | Grants bound to a key                 | 5     |
 
 ## Package
 
 One package, `handshakes`, with four entries and a bin.
 
-| Entry                    | Contents                                                                    |
-| ------------------------ | --------------------------------------------------------------------------- |
+| Entry                    | Contents                                                                       |
+| ------------------------ | ------------------------------------------------------------------------------ |
 | `handshakes`             | `Client`, `DeviceGrant`, `Exchange`, `Identity`, `Metadata`, `Source`, `Store` |
-| `handshakes/better-auth` | `Policy`, `tokenExchange`                                                   |
-| `handshakes/node`        | `NodeSource`, and `Store` with `file` and `keychain`                         |
-| `handshakes/test`        | `Issuer`                                                                    |
-| bin `handshakes`         | The CLI                                                                     |
+| `handshakes/better-auth` | `Policy`, `tokenExchange`                                                      |
+| `handshakes/node`        | `NodeSource`, and `Store` with `file` and `keychain`                           |
+| `handshakes/test`        | `Issuer`                                                                       |
+| bin `handshakes`         | The CLI                                                                        |
 
 - The core entry has no dependencies. It runs in Node, Bun, Deno, and edge runtimes.
 - `handshakes/node` uses `fs` and child processes.
@@ -236,15 +236,15 @@ type Source = {
 }
 ```
 
-| Source                   | Detects             | Request                                                                     | Audience                                   |
-| ------------------------ | ------------------- | --------------------------------------------------------------------------- | ------------------------------------------ |
-| `Source.vercel()`        | `VERCEL`, `VERCEL_OIDC_TOKEN` | Request header, token file, or env. Another audience goes through `@vercel/oidc` | Any                                        |
-| `Source.githubActions()` | `GITHUB_ACTIONS`    | `GET` `ACTIONS_ID_TOKEN_REQUEST_URL` with `audience`, and the request token  | Any                                        |
-| `Source.gitlab()`        | `GITLAB_CI`         | Reads `<AUD>_ID_TOKEN`, or the `variable` option                            | Fixed in `id_tokens` of `.gitlab-ci.yml`   |
-| `Source.circleci()`      | `CIRCLECI`          | Reads `CIRCLE_OIDC_TOKEN_V2`                                                | Fixed                                      |
-| `Source.gcp()`           | `K_SERVICE`         | Metadata server, `…/service-accounts/default/identity?audience=`            | Any                                        |
-| `NodeSource.buildkite()` | `BUILDKITE`         | `buildkite-agent oidc request-token --audience`                             | Any                                        |
-| `NodeSource.file()`      | The file exists     | Reads a projected token, such as a Kubernetes service account token         | Fixed in the pod spec                      |
+| Source                   | Detects                       | Request                                                                          | Audience                                 |
+| ------------------------ | ----------------------------- | -------------------------------------------------------------------------------- | ---------------------------------------- |
+| `Source.vercel()`        | `VERCEL`, `VERCEL_OIDC_TOKEN` | Request header, token file, or env. Another audience goes through `@vercel/oidc` | Any                                      |
+| `Source.githubActions()` | `GITHUB_ACTIONS`              | `GET` `ACTIONS_ID_TOKEN_REQUEST_URL` with `audience`, and the request token      | Any                                      |
+| `Source.gitlab()`        | `GITLAB_CI`                   | Reads `<AUD>_ID_TOKEN`, or the `variable` option                                 | Fixed in `id_tokens` of `.gitlab-ci.yml` |
+| `Source.circleci()`      | `CIRCLECI`                    | Reads `CIRCLE_OIDC_TOKEN_V2`                                                     | Fixed                                    |
+| `Source.gcp()`           | `K_SERVICE`                   | Metadata server, `…/service-accounts/default/identity?audience=`                 | Any                                      |
+| `NodeSource.buildkite()` | `BUILDKITE`                   | `buildkite-agent oidc request-token --audience`                                  | Any                                      |
+| `NodeSource.file()`      | The file exists               | Reads a projected token, such as a Kubernetes service account token              | Fixed in the pod spec                    |
 
 - `Source.defaults` is `[vercel, githubActions, gitlab, circleci, gcp]`, in priority order. `NodeSource.defaults` adds `buildkite`.
 - `Source.from(source)` types a custom source.
@@ -267,12 +267,12 @@ type Store = {
 }
 ```
 
-| Store                              | Entry             | Behavior                                                                                       |
-| ---------------------------------- | ----------------- | ---------------------------------------------------------------------------------------------- |
-| `Store.memory()`                   | `handshakes`      | One process only                                                                               |
-| `Store.from(store)`                | `handshakes`      | Types a custom store                                                                           |
+| Store                                      | Entry             | Behavior                                                                                                                            |
+| ------------------------------------------ | ----------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `Store.memory()`                           | `handshakes`      | One process only                                                                                                                    |
+| `Store.from(store)`                        | `handshakes`      | Types a custom store                                                                                                                |
 | `Store.file({ directory?, lockTimeout? })` | `handshakes/node` | Default directory `~/.config/handshakes/grants`. Mode 0600, atomic writes, a lock file with a stale timeout, a read after each lock |
-| `Store.keychain({ service? })`     | `handshakes/node` | macOS `security`, Linux `secret-tool`                                                          |
+| `Store.keychain({ service? })`             | `handshakes/node` | macOS `security`, Linux `secret-tool`                                                                                               |
 
 The store key is the issuer and the client ID.
 
@@ -376,7 +376,13 @@ type Grant = {
 
 type Status =
   | { expiresAt: number; method: 'exchange'; source: string; subject: string }
-  | { expiresAt: number; method: 'grant'; refreshable: boolean; store: string; subject?: string | undefined }
+  | {
+      expiresAt: number
+      method: 'grant'
+      refreshable: boolean
+      store: string
+      subject?: string | undefined
+    }
   | { checked: readonly string[]; interactive: boolean; method: 'none' }
 
 type Token = {
@@ -391,17 +397,17 @@ type Token = {
 
 ### Errors
 
-| Error                               | Thrown when                                                                                  | Fields                               |
-| ----------------------------------- | -------------------------------------------------------------------------------------------- | ------------------------------------ |
-| `Client.AuthorizationRequiredError` | No source detects, no grant is stored, and the client is not interactive                     | `issuer`                             |
-| `DeviceGrant.DeniedError`           | The user denies the code                                                                     |                                      |
-| `DeviceGrant.ExpiredError`          | The code expires before approval                                                             |                                      |
-| `Exchange.RejectedError`            | The server returns an RFC 6749 §5.2 error                                                    | `error`, `errorDescription`, `status` |
-| `Identity.AudienceError`            | A token with a fixed audience has another `aud`                                              | `expected`, `received`, `source`     |
-| `Identity.NotFoundError`            | No source detects                                                                            | `audience`, `checked`                |
-| `Metadata.NotFoundError`            | The issuer or resource serves no metadata                                                    | `url`                                |
-| `Source.RequestError`               | The detected source fails. The hint states the fix, such as `permissions: id-token: write`   | `hint`, `source`                     |
-| `Store.LockTimeoutError`            | Another process holds the lock past `lockTimeout`                                            | `key`                                |
+| Error                               | Thrown when                                                                                | Fields                                |
+| ----------------------------------- | ------------------------------------------------------------------------------------------ | ------------------------------------- |
+| `Client.AuthorizationRequiredError` | No source detects, no grant is stored, and the client is not interactive                   | `issuer`                              |
+| `DeviceGrant.DeniedError`           | The user denies the code                                                                   |                                       |
+| `DeviceGrant.ExpiredError`          | The code expires before approval                                                           |                                       |
+| `Exchange.RejectedError`            | The server returns an RFC 6749 §5.2 error                                                  | `error`, `errorDescription`, `status` |
+| `Identity.AudienceError`            | A token with a fixed audience has another `aud`                                            | `expected`, `received`, `source`      |
+| `Identity.NotFoundError`            | No source detects                                                                          | `audience`, `checked`                 |
+| `Metadata.NotFoundError`            | The issuer or resource serves no metadata                                                  | `url`                                 |
+| `Source.RequestError`               | The detected source fails. The hint states the fix, such as `permissions: id-token: write` | `hint`, `source`                      |
+| `Store.LockTimeoutError`            | Another process holds the lock past `lockTimeout`                                          | `key`                                 |
 
 ### `handshakes/test`
 
@@ -433,7 +439,12 @@ import { oauthProvider } from '@better-auth/oauth-provider'
 import { Policy, tokenExchange } from 'handshakes/better-auth'
 
 export const auth = betterAuth({
-  plugins: [oauthProvider({ /* … */ }), tokenExchange({ maxLifetime: 900 })],
+  plugins: [
+    oauthProvider({
+      /* … */
+    }),
+    tokenExchange({ maxLifetime: 900 }),
+  ],
 })
 
 await auth.api.createTrustPolicy({
@@ -535,8 +546,16 @@ The CLI reads `handshakes.json` from the nearest ancestor directory, then `~/.co
       "endpoints": { "token": "https://sts.googleapis.com/v1/token" },
       "scope": "https://www.googleapis.com/auth/cloud-platform",
       "sources": {
-        "githubActions": { "parameters": { "audience": "//iam.googleapis.com/projects/<number>/locations/global/workloadIdentityPools/<pool>/providers/github" } },
-        "vercel": { "parameters": { "audience": "//iam.googleapis.com/projects/<number>/locations/global/workloadIdentityPools/<pool>/providers/vercel" } }
+        "githubActions": {
+          "parameters": {
+            "audience": "//iam.googleapis.com/projects/<number>/locations/global/workloadIdentityPools/<pool>/providers/github"
+          }
+        },
+        "vercel": {
+          "parameters": {
+            "audience": "//iam.googleapis.com/projects/<number>/locations/global/workloadIdentityPools/<pool>/providers/vercel"
+          }
+        }
       }
     }
   }
@@ -564,15 +583,15 @@ $ handshakes fetch https://api.example.com/v1/items --fail
 
 ### Exit codes
 
-| Code  | Meaning                                                                |
-| ----- | ---------------------------------------------------------------------- |
-| 0     | Success                                                                |
-| 1     | Unexpected error                                                       |
-| 2     | Invalid usage                                                          |
-| 3     | Authorization required: no source, no grant, and not interactive       |
-| 4     | Rejected by the server: `invalid_grant` on exchange or refresh         |
-| 22    | `fetch --fail` received HTTP 400 or more                               |
-| Other | `exec` returns the exit code of the child                              |
+| Code  | Meaning                                                          |
+| ----- | ---------------------------------------------------------------- |
+| 0     | Success                                                          |
+| 1     | Unexpected error                                                 |
+| 2     | Invalid usage                                                    |
+| 3     | Authorization required: no source, no grant, and not interactive |
+| 4     | Rejected by the server: `invalid_grant` on exchange or refresh   |
+| 22    | `fetch --fail` received HTTP 400 or more                         |
+| Other | `exec` returns the exit code of the child                        |
 
 ### MCP tools
 
@@ -593,14 +612,14 @@ There is no `token` tool, so a token never enters the context of a model.
 
 No mocks, stubs, or stubbed globals. Every test runs against a real server or a real platform.
 
-| Layer                          | Real counterpart                                                                                           |
-| ------------------------------ | ---------------------------------------------------------------------------------------------------------- |
-| Sources                        | `handshakes/test` issuer with `issuer.env()`, and a GitHub Actions job with `id-token: write`              |
-| Device grant, refresh, revoke  | A local Better Auth server: memory adapter, `oauthProvider`, `oauthDeviceAuthorization`, and `jwt`          |
-| Exchange                       | The same server with `handshakes/better-auth`, fed by the test issuer                                      |
-| Interoperability               | Google STS from GitHub Actions in CI. Google OAuth by hand. OpenRouter when a Business plan is available    |
-| Races                          | Several processes that share one `Store.file`                                                              |
-| CLI                            | The built bin against the local server                                                                     |
+| Layer                         | Real counterpart                                                                                         |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------- |
+| Sources                       | `handshakes/test` issuer with `issuer.env()`, and a GitHub Actions job with `id-token: write`            |
+| Device grant, refresh, revoke | A local Better Auth server: memory adapter, `oauthProvider`, `oauthDeviceAuthorization`, and `jwt`       |
+| Exchange                      | The same server with `handshakes/better-auth`, fed by the test issuer                                    |
+| Interoperability              | Google STS from GitHub Actions in CI. Google OAuth by hand. OpenRouter when a Business plan is available |
+| Races                         | Several processes that share one `Store.file`                                                            |
+| CLI                           | The built bin against the local server                                                                   |
 
 `test/Server.ts` starts the local Better Auth server on a random port. A test approves a user code through the server's own approval endpoint, as a signed-in test user.
 
@@ -696,13 +715,13 @@ The track starts after phase 3. The laptop path can start after phase 2, since T
 
 ## Test targets
 
-| Target            | Path                                    | Setup                                                                                         |
-| ----------------- | --------------------------------------- | --------------------------------------------------------------------------------------------- |
-| Vercel AI Gateway | Subject token, no exchange              | `vercel link` and `vercel env pull`, for a token valid 12 hours                               |
-| OpenRouter        | RFC 8693 from GitHub Actions            | Business plan. An issuer for `https://token.actions.githubusercontent.com` and a policy          |
-| Google STS        | RFC 8693 from GitHub Actions and Vercel | A workload identity pool with a provider for each platform                                     |
+| Target            | Path                                    | Setup                                                                                                                    |
+| ----------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| Vercel AI Gateway | Subject token, no exchange              | `vercel link` and `vercel env pull`, for a token valid 12 hours                                                          |
+| OpenRouter        | RFC 8693 from GitHub Actions            | Business plan. An issuer for `https://token.actions.githubusercontent.com` and a policy                                  |
+| Google STS        | RFC 8693 from GitHub Actions and Vercel | A workload identity pool with a provider for each platform                                                               |
 | Google OAuth      | Device grant, refresh, revoke, metadata | An OAuth client of type "TVs and Limited Input devices". The device flow allows few scopes, so the test reads `userinfo` |
-| Local Better Auth | Everything, and refresh races           | `test/Server.ts`                                                                              |
+| Local Better Auth | Everything, and refresh races           | `test/Server.ts`                                                                                                         |
 
 ## Risks and open questions
 
