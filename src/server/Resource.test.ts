@@ -167,6 +167,36 @@ describe('create', () => {
     )
   })
 
+  test('refuses a token whose issuer serves no keys, without throwing', async () => {
+    const unreachable = Resource.create({
+      // Nothing listens on port 9, so the key request fails.
+      policies: [
+        Policy.vercel({
+          audience: api,
+          issuer: 'http://127.0.0.1:9',
+          ownerId: 'team_acme',
+          projectId: 'prj_app',
+          scopes: [],
+        }),
+      ],
+      resource: api,
+    })
+    const token = await issuer.sign({
+      audience: api,
+      claims: { iss: 'http://127.0.0.1:9' },
+      preset: 'vercel',
+    })
+
+    const result = await unreachable.verify(request(token))
+
+    expect(result).toMatchInlineSnapshot(`
+      {
+        "error": "invalid_token",
+        "status": "invalid",
+      }
+    `)
+  })
+
   test('rejects a policy for another audience', () => {
     expect(() =>
       Resource.create({

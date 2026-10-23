@@ -966,6 +966,17 @@ Done when `handshakes fetch` works without a profile against an API that uses `R
 
 ## Risks and open questions
 
+- Security review (phase 5), fixed:
+  - A grant is keyed by issuer, client, resource, and token endpoint (`Grant.key`), so another resource or a project file with other endpoints never reads it.
+  - `Client.fetch` sends a token only within its `resource`, and returns redirects unfollowed. Without a resource, the CLI keeps a profile's token on the origin of its server.
+  - `Policy.resources` limits RFC 8707 resources, and a request for another receives `invalid_target`.
+  - A policy needs at least one claim, and `Server` caps the body at 64 KiB.
+  - Under `--mcp`, `fetch` takes no `issuer`, `resource`, `clientId`, or `scope`, and reads no file.
+  - The file lock writes an owner nonce, refreshes its mtime while held, and moves a stale lock away before removal.
+  - Key requests share one fetch per issuer, time out after 10 seconds, and cache a failure for a minute. OAuth requests time out after 20 seconds.
+  - `exec` refuses a variable that changes how the child runs, such as `NODE_OPTIONS`.
+- A project `handshakes.json` can still name its own issuer, so the device grant can open a page of that issuer. It never reads a grant of another issuer or endpoint.
+
 - `extendOAuthProvider` is new in `@better-auth/oauth-provider`. Pin the version, and run the plugin tests on every upgrade.
 - `handshakes/better-auth` can stay here or move to Better Auth after 1.0.
 - `issueTokens` of `@better-auth/oauth-provider` takes no lifetime. Propose one upstream, so the plugin can cap the access token at the expiry of the subject token instead of refusing.

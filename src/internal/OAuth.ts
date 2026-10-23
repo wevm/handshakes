@@ -21,6 +21,8 @@ export async function post(options: post.Options): Promise<Result> {
     ),
     headers: { accept: 'application/json', 'content-type': 'application/x-www-form-urlencoded' },
     method: 'POST',
+    // A refresh runs under the store lock, so a request that hangs must not hold it.
+    signal: AbortSignal.timeout(options.timeout ?? 20_000),
   })
 
   const body = await (async () => {
@@ -48,6 +50,8 @@ export declare namespace post {
     /** Form fields. Fields with `undefined` are left out. */
     body: Readonly<Record<string, string | undefined>>
     fetch: typeof globalThis.fetch
+    /** How long the request may take, in milliseconds. Default: 20000. */
+    timeout?: number | undefined
     url: string
   }
 }

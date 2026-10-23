@@ -271,6 +271,17 @@ describe('handshakes', () => {
       `)
     })
 
+    test('exec refuses a variable that changes how the child runs', async () => {
+      const result = await run(['exec', '--env', 'NODE_OPTIONS', '--', 'true'], env)
+
+      expect(result.status).toMatchInlineSnapshot(`2`)
+      expect(result.stdout + result.stderr).toMatchInlineSnapshot(`
+        "code: INVALID_ENV
+        message: "The variable NODE_OPTIONS cannot hold the token. To resolve: Name a variable for the token alone, such as API_TOKEN."
+        "
+      `)
+    })
+
     test('profiles lists the profiles and the default', async () => {
       const result = await run(['profiles', '--json'], env)
 

@@ -46,32 +46,36 @@ export function file(options: file.Options = {}): Store.Store {
     async lock(key, fn) {
       await Fs.mkdir(directory, { mode: 0o700, recursive: true })
 
+      // The owner writes a nonce, so it removes only its own lock, never one that replaced it.
       const lock = `${path(key)}.lock`
+      const nonce = Crypto.randomUUID()
       const start = Date.now()
       while (true) {
         try {
-          await (await Fs.open(lock, 'wx', 0o600)).close()
+          await Fs.writeFile(lock, nonce, { flag: 'wx', mode: 0o600 })
           break
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
         }
 
-        const held = await Fs.stat(lock).then(
-          (stat) => Date.now() - stat.mtimeMs,
-          () => 0,
-        )
-        if (held > staleAfter) {
-          await Fs.rm(lock, { force: true })
-          continue
-        }
+        if (await takeOver(lock)) continue
         if (Date.now() - start > lockTimeout) throw new LockTimeoutError({ key })
         await new Promise((resolve) => setTimeout(resolve, 25))
       }
 
+      // A live owner touches the lock, so a slow refresh never looks stale to another process.
+      const heartbeat = setInterval(() => {
+        const now = new Date()
+        Fs.utimes(lock, now, now).catch(() => {})
+      }, staleAfter / 3)
+      heartbeat.unref()
+
       try {
         return await fn()
       } finally {
-        await Fs.rm(lock, { force: true })
+        clearInterval(heartbeat)
+        const owner = await Fs.readFile(lock, 'utf8').catch(() => undefined)
+        if (owner === nonce) await Fs.rm(lock, { force: true })
       }
     },
     async set(key, grant) {
@@ -111,4 +115,30 @@ export class LockTimeoutError extends Errors.BaseError {
     })
     this.key = options.key
   }
+}
+
+/**
+ * Removes `lock` when its owner stopped, and returns whether it did. The lock moves to a unique name
+ * first, so of several waiters only one removes it. A lock that turns out fresh moves back.
+ */
+async function takeOver(lock: string): Promise<boolean> {
+  const held = await Fs.stat(lock).then(
+    (stat) => Date.now() - stat.mtimeMs,
+    () => 0,
+  )
+  if (held <= staleAfter) return false
+
+  const moved = `${lock}.${Crypto.randomUUID()}.stale`
+  try {
+    await Fs.rename(lock, moved)
+  } catch {
+    // Another waiter moved it first.
+    return false
+  }
+
+  const stale = await Fs.stat(moved).then((stat) => Date.now() - stat.mtimeMs > staleAfter)
+  // A fresh lock replaced the stale one before the rename. `link` restores it unless a new lock exists.
+  if (!stale) await Fs.link(moved, lock).catch(() => {})
+  await Fs.rm(moved, { force: true })
+  return stale
 }

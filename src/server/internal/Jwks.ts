@@ -3,21 +3,44 @@ import * as Jwt from '../../internal/Jwt.js'
 
 /** Returns a key cache. One cache serves one server, for the life of its instance. */
 export function create(options: create.Options) {
+  const timeout = options.timeout ?? 10_000
   const ttl = options.ttl ?? 600_000
-  const sets = new Map<string, { fetchedAt: number; keys: readonly JsonWebKey[] }>()
+  const pending = new Map<string, Promise<readonly JsonWebKey[]>>()
+  const sets = new Map<
+    string,
+    { failed: boolean; fetchedAt: number; keys: readonly JsonWebKey[] }
+  >()
 
-  /** Returns the keys of `issuer`, from the cache or from its discovery document. */
+  /**
+   * Returns the keys of `issuer`, from the cache or from its discovery document. Concurrent callers
+   * share one request. A failed request caches an empty set for a minute, so bad tokens cannot
+   * flood the issuer, and a refresh for an unknown `kid` runs at most once a minute.
+   */
   async function keys(issuer: string, refresh: boolean): Promise<readonly JsonWebKey[]> {
     const cached = sets.get(issuer)
-    const now = Date.now()
-    // A refresh for an unknown `kid` runs at most once a minute, so bad tokens cannot flood the issuer.
-    if (cached && now - cached.fetchedAt < (refresh ? 60_000 : ttl)) return cached.keys
+    const age = refresh || cached?.failed ? 60_000 : ttl
+    if (cached && Date.now() - cached.fetchedAt < age) return cached.keys
 
+    const current = pending.get(issuer)
+    if (current) return current
+
+    const request = (async () => {
+      const set = await load(issuer).catch(() => undefined)
+      sets.set(issuer, { failed: !set, fetchedAt: Date.now(), keys: set ?? [] })
+      return set ?? []
+    })().finally(() => pending.delete(issuer))
+    pending.set(issuer, request)
+    return request
+  }
+
+  /** Fetches the keys of `issuer`, from `jwks_uri` of its discovery document, else `/.well-known/jwks`. */
+  async function load(issuer: string): Promise<readonly JsonWebKey[]> {
+    const base = issuer.replace(/\/$/, '')
     const uri = await (async () => {
       try {
-        const response = await options.fetch(
-          `${issuer.replace(/\/$/, '')}/.well-known/openid-configuration`,
-        )
+        const response = await options.fetch(`${base}/.well-known/openid-configuration`, {
+          signal: AbortSignal.timeout(timeout),
+        })
         if (!response.ok) return undefined
         const body = (await response.json()) as { jwks_uri?: unknown }
         return typeof body.jwks_uri === 'string' ? body.jwks_uri : undefined
@@ -26,16 +49,12 @@ export function create(options: create.Options) {
       }
     })()
 
-    const response = await options.fetch(uri ?? `${issuer.replace(/\/$/, '')}/.well-known/jwks`)
-    if (!response.ok)
-      throw new Error(
-        `The keys of ${issuer} returned HTTP ${response.status}. Check that the issuer serves \`jwks_uri\` in its discovery document, or \`/.well-known/jwks\`.`,
-      )
+    const response = await options.fetch(uri ?? `${base}/.well-known/jwks`, {
+      signal: AbortSignal.timeout(timeout),
+    })
+    if (!response.ok) throw new Error(`The keys of ${issuer} returned HTTP ${response.status}.`)
     const body = (await response.json()) as { keys?: unknown }
-    const set = Array.isArray(body.keys) ? (body.keys as JsonWebKey[]) : []
-
-    sets.set(issuer, { fetchedAt: now, keys: set })
-    return set
+    return Array.isArray(body.keys) ? (body.keys as JsonWebKey[]) : []
   }
 
   return {
@@ -70,6 +89,8 @@ export function create(options: create.Options) {
 export declare namespace create {
   type Options = {
     fetch: typeof globalThis.fetch
+    /** How long a key request may take, in milliseconds. Default: 10000. */
+    timeout?: number | undefined
     /** How long a key set stays cached, in milliseconds. Default: 600000. */
     ttl?: number | undefined
   }

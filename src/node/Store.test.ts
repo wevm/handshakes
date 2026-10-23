@@ -46,6 +46,40 @@ describe('file', () => {
     expect(await store.get('key')).toMatchInlineSnapshot(`undefined`)
   })
 
+  test('takes over the lock of a process that stopped', async () => {
+    const lockDirectory = Path.join(directory, 'stale')
+    const store = Store.file({ directory: lockDirectory, lockTimeout: 1000 })
+    // A first lock records the name of the lock file.
+    const name = await store.lock('key', async () =>
+      Fs.readdirSync(lockDirectory).find((file) => file.endsWith('.lock')),
+    )
+    const lock = Path.join(lockDirectory, name ?? '')
+    Fs.writeFileSync(lock, 'stopped')
+    Fs.utimesSync(lock, new Date(0), new Date(0))
+
+    const result = await store.lock('key', async () => 'acquired')
+
+    expect(result).toMatchInlineSnapshot(`"acquired"`)
+    expect(Fs.existsSync(lock)).toMatchInlineSnapshot(`false`)
+  })
+
+  test('keeps a lock that another owner holds when it releases', async () => {
+    const lockDirectory = Path.join(directory, 'owner')
+    const store = Store.file({ directory: lockDirectory })
+
+    const lock = await store.lock('key', async () => {
+      const file = Path.join(
+        lockDirectory,
+        Fs.readdirSync(lockDirectory).find((entry) => entry.endsWith('.lock')) ?? '',
+      )
+      // Another process took the lock over, as after a stale timeout.
+      Fs.writeFileSync(file, 'other')
+      return file
+    })
+
+    expect(Fs.readFileSync(lock, 'utf8')).toMatchInlineSnapshot(`"other"`)
+  })
+
   test('refreshes an expiring grant once when several processes request a token', async () => {
     const grants = Path.join(directory, 'race')
     const store = Store.file({ directory: grants })
