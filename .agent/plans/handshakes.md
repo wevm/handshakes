@@ -1,6 +1,6 @@
 # Handshakes implementation plan
 
-Status: draft
+Status: phase 0 done. Phase 1 is next.
 
 Handshakes is an OAuth client library and CLI that replaces stored API keys with short-lived access tokens.
 
@@ -839,7 +839,7 @@ No mocks, stubs, or stubbed globals. Every test runs against a real server or a 
 - The entries, empty.
 - `test/Server.ts`.
 
-Done when `pnpm check` and `pnpm test` pass, with one test that reads the metadata of the local server.
+Done when `pnpm check` and `pnpm test` pass, with one test that reads the metadata of the local server. Done in `6c60ac7`.
 
 ### Phase 1: subject tokens
 
