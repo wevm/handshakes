@@ -146,7 +146,7 @@ One package, `handshakes`, with five entries and a bin.
 
 - The core entry has no dependencies. It runs in Node, Bun, Deno, and edge runtimes.
 - `handshakes/node` uses `fs` and child processes. Its `Source` and `Store` add to the namespaces of the same name in the core entry. A module that imports both renames one, such as `Store as NodeStore`.
-- `handshakes/server` has no dependencies. It verifies RS256 and ES256 signatures with WebCrypto, so it runs on edge runtimes too.
+- `handshakes/server` has no dependencies. It verifies RS256, ES256, and EdDSA (Ed25519) signatures with WebCrypto, so it runs on edge runtimes too.
 - `better-auth` and `@better-auth/oauth-provider` are optional peers.
 
 ## TypeScript API
@@ -679,7 +679,7 @@ type Policy = {
 
 - `Policy.githubActions({ audience, ref?, repositoryId, scopes, workflow? })` and `Policy.vercel({ audience, environment?, ownerId, projectId, scopes })` require identifiers that cannot change. A preset rejects a policy that matches names only, since a renamed or re-created repository keeps its name.
 - `Policy.from(policy)` types a custom policy.
-- Verification accepts RS256 and ES256 only, an exact `iss`, and an exact `aud`. It has no single-use `jti` rule, since Vercel reuses one subject token for up to 90 minutes.
+- Verification accepts RS256, ES256, and EdDSA (Ed25519) only, an exact `iss`, and an exact `aud`. It has no single-use `jti` rule, since Vercel reuses one subject token for up to 90 minutes.
 
 ### `handshakes/better-auth`
 
@@ -984,6 +984,6 @@ Done when `handshakes fetch` works without a profile against an API that uses `R
 - `Source.vercel` calls `https://oidc.vercel.com/~token` directly. If Vercel changes that endpoint, follow `@vercel/oidc`, which documents it in code only.
 - `exec` puts the token in the environment of the child, which other processes of the same user can read. This is acceptable for a token that expires in minutes.
 - Google refresh tokens do not rotate, so only the local server exercises the refresh race.
-- Better Auth's `jwt` plugin signs with EdDSA by default, and `Resource` accepts RS256 and ES256 only. A Better Auth host sets `jwks.keyPairConfig.alg` to `ES256` or `RS256`, as the test server does. Adding EdDSA (WebCrypto Ed25519) is an open question.
+- Better Auth's `jwt` plugin signs with EdDSA by default, so `Resource` accepts EdDSA (Ed25519 through WebCrypto), and the test server keeps the default key.
 - `Store.keychain` is deferred. macOS `security add-generic-password` reads the secret from argv or a TTY prompt, and other users' processes can read argv. Linux `secret-tool` reads stdin. Neither runs in this repository's CI.
 - GitHub returns device grant errors with HTTP 200. `OAuth.post` treats a response with `error` as an error. GitHub App user tokens refresh only with a client secret, so without one the client runs the device grant again after 8 hours.

@@ -64,14 +64,16 @@ export function create(options: create.Options) {
         set.find(
           (entry) =>
             (input.kid === undefined || (entry as { kid?: string }).kid === input.kid) &&
-            entry.kty === (input.algorithm === 'ES256' ? 'EC' : 'RSA'),
+            entry.kty === Jwt.algorithms[input.algorithm].kty &&
+            // EdDSA names its curve in `crv`. Only Ed25519 is accepted.
+            (input.algorithm !== 'EdDSA' || entry.crv === 'Ed25519'),
         )
 
       const jwk = find(await keys(input.issuer, false)) ?? find(await keys(input.issuer, true))
       if (!jwk) return undefined
 
       // Only the public parameters are imported. `alg`, `use`, and `key_ops` can conflict with WebCrypto.
-      const fields = jwk.kty === 'EC' ? ['crv', 'kty', 'x', 'y'] : ['e', 'kty', 'n']
+      const fields = Jwt.algorithms[input.algorithm].fields
       const material: JsonWebKey = Object.fromEntries(
         fields.map((field) => [field, jwk[field as keyof JsonWebKey]]),
       )

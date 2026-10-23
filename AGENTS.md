@@ -24,7 +24,7 @@ Source commit: `0b589ec34481856b4153526f10a0a35558a201a8`. Retrieved 2026-10-23.
 - Require an explicit audience for every subject token. A token for one service never reaches another.
 - Decode, but never trust, the claims of a token on the client. Claims serve logs and errors only.
 - The client verifies a fixed-audience token's `aud` before it sends the token.
-- `Server` and `Resource` accept RS256 and ES256 only, match `iss` and `aud` exactly, and match policies on identifiers that cannot change, such as `repository_id` and `project_id`, never on names.
+- `Server` and `Resource` accept RS256, ES256, and EdDSA (Ed25519) only, match `iss` and `aud` exactly, and match policies on identifiers that cannot change, such as `repository_id` and `project_id`, never on names.
 - Never issue a token that outlives the subject token it replaces.
 - `Store.file` of `handshakes/node` writes with mode 0600, writes atomically, and refreshes under a lock that covers every process. A reused refresh token can revoke every grant of the client and user.
 - Never read a client secret from argv. Read it from an environment variable that the caller names.

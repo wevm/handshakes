@@ -1,19 +1,37 @@
 /** @module Decodes JWTs (RFC 7519), and verifies their signatures (RFC 7515) with WebCrypto. */
 
-/** Algorithms that `verify` accepts, with their WebCrypto parameters. */
+/**
+ * Algorithms that `verify` accepts, with their WebCrypto parameters and the JWK key type and public
+ * fields of each. EdDSA is Ed25519 only (RFC 8037), which Better Auth signs with by default.
+ */
 export const algorithms = {
+  EdDSA: {
+    fields: ['crv', 'kty', 'x'],
+    import: { name: 'Ed25519' },
+    kty: 'OKP',
+    verify: { name: 'Ed25519' },
+  },
   ES256: {
+    fields: ['crv', 'kty', 'x', 'y'],
     import: { name: 'ECDSA', namedCurve: 'P-256' },
+    kty: 'EC',
     verify: { hash: 'SHA-256', name: 'ECDSA' },
   },
   RS256: {
+    fields: ['e', 'kty', 'n'],
     import: { hash: 'SHA-256', name: 'RSASSA-PKCS1-v1_5' },
+    kty: 'RSA',
     verify: { name: 'RSASSA-PKCS1-v1_5' },
   },
 } as const
 
 /** A JWS algorithm that `verify` accepts. */
 export type Algorithm = keyof typeof algorithms
+
+/** Returns whether `verify` accepts `value`, the `alg` of a header. `none` and HMAC never pass. */
+export function accepts(value: unknown): value is Algorithm {
+  return value === 'EdDSA' || value === 'ES256' || value === 'RS256'
+}
 
 /** Returns the `aud` claim as a list. A missing claim returns an empty list. */
 export function audiences(payload: Decoded['payload']): readonly string[] {

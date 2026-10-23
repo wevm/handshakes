@@ -42,7 +42,7 @@ export function create(options: create.Options): Resource {
 
     const algorithm = decoded.header['alg']
     const issuer = decoded.payload['iss']
-    if (algorithm !== 'RS256' && algorithm !== 'ES256') return invalid
+    if (!Jwt.accepts(algorithm)) return invalid
     if (typeof issuer !== 'string') return invalid
 
     const kid = typeof decoded.header['kid'] === 'string' ? decoded.header['kid'] : undefined

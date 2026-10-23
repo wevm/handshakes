@@ -26,8 +26,8 @@ export async function create(options: create.Options = {}): Promise<create.Retur
     baseURL: url,
     emailAndPassword: { enabled: true },
     plugins: [
-      // `Resource` accepts RS256 and ES256. Better Auth signs with EdDSA by default.
-      jwt({ jwks: { keyPairConfig: { alg: 'ES256' } }, jwt: { issuer: url } }),
+      // The default signing key, EdDSA, so the tests cover a Better Auth server as it ships.
+      jwt({ jwt: { issuer: url } }),
       // Access tokens of the exchange must end before subject tokens of the test issuer, which live for 300 seconds.
       oauthProvider({
         consentPage: '/consent',

@@ -74,8 +74,14 @@ describe('create', () => {
       resource: api,
     })
     const token = await client.token()
+    const header = JSON.parse(
+      Buffer.from(token.value.split('.')[0] ?? '', 'base64url').toString(),
+    ) as { alg: string }
 
     const result = await resource.verify(request(token.value))
+
+    // Better Auth signs with EdDSA by default.
+    expect(header.alg).toMatchInlineSnapshot(`"EdDSA"`)
 
     if (result.status !== 'valid') throw new Error(`Expected a principal, not ${result.error}.`)
     expect(result.principal.scopes).toMatchInlineSnapshot(`

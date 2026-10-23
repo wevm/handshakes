@@ -76,7 +76,7 @@ export async function verify(options: {
 
   const algorithm = decoded.header['alg']
   const issuer = decoded.payload['iss']
-  if ((algorithm !== 'RS256' && algorithm !== 'ES256') || typeof issuer !== 'string') return refused
+  if (!Jwt.accepts(algorithm) || typeof issuer !== 'string') return refused
 
   // Only issuers that a policy names are contacted, so a token cannot direct requests elsewhere.
   // A policy without claims would match every token of its issuer, such as every GitHub repository.
