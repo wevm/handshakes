@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  <a href="#overview">Overview</a> · <a href="#agent-prompt">Agent Prompt</a> · <a href="#philosophy">Philosophy</a> · <a href="#features">Features</a> · <a href="#usage">Usage</a> · <a href="#cli">CLI</a> · <a href="#api">API</a>
+  <a href="#overview">Overview</a> · <a href="#agent-prompt">Agent Prompt</a> · <a href="#philosophy">Philosophy</a> · <a href="#features">Features</a> · <a href="#usage">Usage</a> · <a href="#cli">CLI</a>
 </p>
 
 ## Overview
@@ -32,6 +32,47 @@ const { text } = await generateText({
   model: openrouter('anthropic/claude-sonnet-4.5'),
   prompt: 'Summarize the release notes.',
 })
+```
+
+### Token Exchange
+
+In CI and on servers, the client exchanges the OIDC token of the platform for an access token. In the example above, OpenRouter is both the authorization server and the API.
+
+```mermaid
+sequenceDiagram
+  %% The client stores no secret. The platform signs the subject token for each job.
+  participant Client as Client (handshakes)
+  participant AS as Authorization server
+  participant API
+  Client->>Client: 1. Request the OIDC token of the platform, such as GitHub Actions
+  Client->>AS: 2. Exchange the subject token (RFC 8693)
+  AS->>AS: 3. Verify the token with the JWKS of the platform, and match a trust policy
+  AS-->>Client: 4. Access token that expires in minutes
+  Client->>API: 5. Request with Authorization: Bearer
+  API->>AS: 6. Fetch the JWKS, once, then cache it
+  API->>API: 7. Verify the access token with the JWKS
+  API-->>Client: 8. Response
+```
+
+### Device Grant
+
+On a laptop, the client runs the device grant once and stores the grant. After that, it refreshes the grant before the access token expires.
+
+```mermaid
+sequenceDiagram
+  %% The user approves the client once, in a browser.
+  participant Client as Client (handshakes)
+  participant AS as Authorization server
+  participant API
+  Client->>AS: 1. Request a device code (RFC 8628)
+  AS-->>Client: 2. User code and verification URL
+  Client->>Client: 3. Print the user code, which the user approves in a browser
+  Client->>AS: 4. Poll the token endpoint
+  AS-->>Client: 5. Access token and refresh token, stored
+  Client->>API: 6. Request with Authorization: Bearer
+  API->>AS: 7. Fetch the JWKS, once, then cache it
+  API->>API: 8. Verify the access token with the JWKS
+  API-->>Client: 9. Response
 ```
 
 ## Agent Prompt
@@ -67,78 +108,83 @@ Read github.com/wevm/handshakes and replace the stored API keys of my project wi
 
 ## Usage
 
-The examples below form one deployment of three parties. A CI job calls `api.example.com`, and `auth.example.com` issues its access tokens. The job stores no secret, and starts from the URL of the API only.
+The examples below use `auth.example.com` as the authorization server, and `api.example.com` as the API.
 
-```mermaid
-sequenceDiagram
-  %% The authorization server and the API are separate hosts. The job starts from the API URL only.
-  participant Job as CI job (Client)
-  participant GH as GitHub
-  participant AS as auth.example.com (Better Auth)
-  participant API as api.example.com (Resource)
-  Job->>API: 1. GET /.well-known/oauth-protected-resource
-  API-->>Job: 2. authorization_servers: auth.example.com
-  Job->>AS: 3. GET /.well-known/oauth-authorization-server
-  Job->>GH: 4. Request an OIDC token for auth.example.com
-  GH-->>Job: 5. Subject token
-  Job->>AS: 6. RFC 8693 exchange, resource=api.example.com
-  AS-->>Job: 7. Access token with aud=api.example.com
-  Job->>API: 8. GET /v1/items with Authorization: Bearer
-  API->>AS: 9. Fetch the signing keys, once
-  API-->>Job: 10. Response
-```
+### Client
 
-### `handshakes`
-
-`Client` returns access tokens for one API. It resolves each token in this order:
-
-1. A cached access token.
-2. An exchange of the subject token of the detected platform.
-3. A refresh of the stored grant.
-4. A device grant, if stdin is a TTY and `CI` is not set.
-5. Otherwise, `Client.AuthorizationRequiredError`.
-
-`Client.discover` finds the authorization server from the API. `Client.create` takes the `issuer` directly, for an API without RFC 9728 metadata.
+`Client` returns an access token for one API. In CI, it exchanges the OIDC token of the platform. On a laptop, it runs the device grant and refreshes the stored grant.
 
 ```ts
 import { Client } from 'handshakes'
-
-// Reads the RFC 9728 metadata of the API, then creates a client for its authorization server.
-const client = await Client.discover({
-  // OAuth client for the device grant and refresh. Required on a laptop only.
-  clientId: 'example-cli',
-  resource: 'https://api.example.com',
-  scope: 'data:read',
-})
-
-// Sends the request with `Authorization: Bearer`. After a `401`, retries once with a new token.
-const response = await client.fetch('https://api.example.com/v1/items')
-
-// Revokes the refresh token and deletes the stored grant.
-await client.revoke()
-```
-
-### `handshakes/node`
-
-`handshakes/node` adds the sources and stores that use the file system or a child process.
-
-```ts
-import { Client } from 'handshakes'
-import { NodeSource, Store } from 'handshakes/node'
+import { NodeStore } from 'handshakes/node'
 
 const client = Client.create({
+  // OAuth client for the device grant. Required on a laptop only.
   clientId: 'example-cli',
   issuer: 'https://auth.example.com',
-  // Adds Buildkite to the default sources.
-  sources: NodeSource.defaults,
-  // Writes the grant to `~/.config/handshakes/grants` with mode 0600, and refreshes under a lock.
-  store: Store.file(),
+  scope: 'data:read',
+  // Keeps the grant in `~/.config/handshakes/grants`, shared by every process.
+  store: NodeStore.file(),
+})
+
+// Sends the request with `Authorization: Bearer`.
+const response = await client.fetch('https://api.example.com/v1/items')
+```
+
+### Authorization Server
+
+`Server` serves the token exchange (RFC 8693) as a fetch handler. It verifies the subject token, matches a trust policy, and calls `issue` for the credential.
+
+```ts
+import { Policy, Server } from 'handshakes/server'
+
+const server = Server.create({
+  // Mints the credential, such as an API key. It expires no later than the subject token.
+  issue: async (context) => ({
+    accessToken: await keys.mint({ expiresAt: context.expiresAt, scopes: context.policy.scopes }),
+    expiresAt: context.expiresAt,
+  }),
+  issuer: 'https://auth.example.com',
+  // Accepts the GitHub Actions tokens of one repository.
+  policies: [
+    Policy.githubActions({
+      audience: 'https://auth.example.com',
+      repositoryId: '812345',
+      scopes: ['data:read'],
+    }),
+  ],
+})
+
+// Serves `POST /oauth2/token` and `/.well-known/oauth-authorization-server`.
+export default { fetch: server.fetch }
+```
+
+On a [Better Auth](https://www.better-auth.com) server, `tokenExchange` adds the same exchange to `@better-auth/oauth-provider`, and Better Auth issues the access tokens.
+
+```ts
+import { oauthProvider } from '@better-auth/oauth-provider'
+import { betterAuth } from 'better-auth'
+import { jwt } from 'better-auth/plugins/jwt'
+import { tokenExchange } from 'handshakes/better-auth'
+
+export const auth = betterAuth({
+  plugins: [
+    jwt(),
+    oauthProvider({
+      consentPage: '/consent',
+      loginPage: '/login',
+      // Issues JWT access tokens with the `aud` of the API (RFC 8707).
+      resources: ['https://api.example.com'],
+    }),
+    // Adds the token exchange. Trust policies live in the `trustPolicy` table.
+    tokenExchange(),
+  ],
 })
 ```
 
-### `handshakes/server`
+### API
 
-`Resource` verifies the tokens that `api.example.com` receives. It serves the RFC 9728 metadata that names `auth.example.com`, and returns the `401` challenge.
+`Resource` verifies the access tokens that the API receives, and returns the `401` challenge. If `Server` issues an API key instead, the API checks that key as before.
 
 ```ts
 import { Resource } from 'handshakes/server'
@@ -150,11 +196,7 @@ const resource = Resource.create({
 
 export default {
   async fetch(request: Request) {
-    // Names the authorization server, so clients discover it.
-    if (new URL(request.url).pathname === '/.well-known/oauth-protected-resource')
-      return resource.metadata()
-
-    // Returns `401` with `WWW-Authenticate: Bearer resource_metadata="…"` for a bad token.
+    // Returns `401` with `WWW-Authenticate` for a missing or invalid token.
     const result = await resource.verify(request)
     if (result.status === 'invalid') return resource.challenge(result)
 
@@ -163,75 +205,9 @@ export default {
 }
 ```
 
-An API can also run `Server` itself, with no separate authorization server. `Server` serves the RFC 8693 token endpoint and its RFC 8414 metadata as a fetch handler, and `issue` mints the credential of the host.
+### Testing
 
-```ts
-import { Policy, Server } from 'handshakes/server'
-
-const server = Server.create({
-  // Mints an API key. `context.expiresAt` already ends no later than the subject token.
-  issue: async (context) => ({
-    accessToken: await keys.mint({ expiresAt: context.expiresAt, scopes: context.policy.scopes }),
-    expiresAt: context.expiresAt,
-  }),
-  issuer: 'https://api.example.com',
-  // Accepts the GitHub Actions tokens of one repository on `main`.
-  policies: [
-    Policy.githubActions({
-      audience: 'https://api.example.com',
-      ref: 'refs/heads/main',
-      repositoryId: '812345',
-      scopes: ['data:read'],
-    }),
-  ],
-})
-
-// Serves `POST /oauth2/token` and `/.well-known/oauth-authorization-server`.
-export default { fetch: server.fetch }
-```
-
-### `handshakes/better-auth`
-
-`tokenExchange` adds the exchange to `auth.example.com`, a [Better Auth](https://www.better-auth.com) server with `@better-auth/oauth-provider`. Its access tokens are JWTs with the `aud` of the API, so `Resource` verifies them with the keys of `auth.example.com`.
-
-```ts
-import { oauthProvider } from '@better-auth/oauth-provider'
-import { betterAuth } from 'better-auth'
-import { jwt } from 'better-auth/plugins/jwt'
-import { tokenExchange } from 'handshakes/better-auth'
-import { Policy } from 'handshakes/server'
-
-export const auth = betterAuth({
-  baseURL: 'https://auth.example.com',
-  plugins: [
-    // Signs the access tokens, and serves the keys that `Resource` fetches.
-    jwt(),
-    oauthProvider({
-      consentPage: '/consent',
-      loginPage: '/login',
-      // Issues JWT access tokens with the `aud` of the API (RFC 8707).
-      resources: ['https://api.example.com'],
-    }),
-    // Caps every exchanged access token at 15 minutes.
-    tokenExchange({ maxLifetime: 900 }),
-  ],
-})
-
-// Stores the trust policy in the `trustPolicy` table.
-await auth.api.createTrustPolicy({
-  body: Policy.githubActions({
-    audience: 'https://auth.example.com',
-    clientId: 'ci',
-    ref: 'refs/heads/main',
-    repositoryId: '812345',
-    scopes: ['data:read'],
-  }),
-})
-```
-
-### `handshakes/test`
-
-`Issuer` signs real OIDC tokens for integration tests. It also serves the GitHub Actions token request, so `Source.githubActions` runs unchanged against it.
+`Issuer` from `handshakes/test` signs real OIDC tokens for integration tests. It also serves the GitHub Actions token request, so `Source.githubActions` runs unchanged against it.
 
 ```ts
 import { Identity } from 'handshakes'
@@ -248,99 +224,52 @@ await issuer.close()
 
 ## CLI
 
-The `handshakes` CLI resolves an access token in the same order as `Client`. It writes the token or the response body to stdout, and prompts and messages to stderr.
+The `handshakes` CLI resolves an access token in the same order as `Client`. Profiles in `handshakes.json` name the authorization server and the client.
 
 ```sh
 # Runs the device grant and stores the grant.
 handshakes authorize example
 
-# Runs the tests with an access token in `EXAMPLE_API_KEY`.
+# Runs the tests with an access token in the variable that the profile names.
 handshakes exec example -- pnpm test
-
-# Sends a request. Without a profile, discovers the authorization server from the API.
-handshakes fetch https://api.example.com/v1/items --fail
-
-# Prints the Vercel OIDC token for AI Gateway.
-handshakes token --audience https://vercel.com/acme
 ```
 
-### Commands
+```txt
+$ handshakes --help
+handshakes — Resolves short-lived OAuth access tokens from the platform identity or a stored grant, in place of stored API keys.
 
-| Command                   | Behavior                                                             |
-| ------------------------- | -------------------------------------------------------------------- |
-| `authorize [profile]`     | Runs the device grant and stores the grant. Alias: `login`           |
-| `exec [profile] -- <cmd>` | Runs `<cmd>` with an access token in an environment variable         |
-| `fetch [profile] <url>`   | Sends a request with an access token                                 |
-| `profiles`                | Lists the profiles and the file of each                              |
-| `revoke [profile]`        | Revokes the refresh token and deletes the grant. Alias: `logout`     |
-| `status [profile]`        | Prints the method, the subject, and the expiry. Never prints a token |
-| `token [profile]`         | Prints an access token                                               |
-| `token --audience <aud>`  | Prints the subject token for `<aud>`                                 |
+Usage: handshakes <command>
 
-### Options
+Commands:
+  authorize  Runs the device grant (RFC 8628) and stores the grant. Alias: login.
+  exec       Runs the command after `--` with an access token in an environment variable, then exits with its code.
+  login      Runs the device grant (RFC 8628) and stores the grant. Alias: login.
+  logout     Revokes the refresh token (RFC 7009) and deletes the stored grant. Alias: logout.
+  profiles   Lists the profiles, the file of each, and the default profile.
+  revoke     Revokes the refresh token (RFC 7009) and deletes the stored grant. Alias: logout.
+  status     Names the source that detects its platform here and, for a profile, the stored grant and its expiry.
+  token      Prints the access token of a profile. With --audience, prints the OIDC token that the platform signs for this code.
 
-| Option                       | Behavior                                                          |
-| ---------------------------- | ----------------------------------------------------------------- |
-| `--audience <aud>`           | Sets the audience of the subject token                            |
-| `--client-id <id>`           | Sets the OAuth client for the device grant and refresh            |
-| `--client-secret-env <NAME>` | Reads the client secret from this environment variable            |
-| `--issuer <url>`             | Sets the authorization server. Overrides the profile              |
-| `--json`                     | Prints machine-readable output                                    |
-| `--mcp`                      | Serves `fetch` and `status` as MCP tools. No tool returns a token |
-| `--no-interactive`           | Never runs the device grant. On when `CI` is set                  |
-| `--resource <url>`           | Sets the RFC 8707 resource                                        |
-| `--scope <scopes>`           | Sets the space-separated scopes                                   |
-| `--source <name>`            | Uses only this source. Repeatable                                 |
+Integrations:
+  completions  Generate shell completion script
+  mcp          Register as MCP server (add, doctor)
+  skills       Sync skill files to agents (add, list)
 
-### Profiles
-
-The CLI reads `handshakes.json` in the nearest ancestor directory, then `~/.config/handshakes/config.json`. `HANDSHAKES_PROFILE` selects a profile, and `HANDSHAKES_CONFIG` names another file.
-
-```json
-{
-  "default": "example",
-  "profiles": {
-    "example": {
-      "clientId": "example-cli",
-      "env": "EXAMPLE_API_KEY",
-      "issuer": "https://auth.example.com",
-      "scope": "data:read"
-    }
-  }
-}
+Global Options:
+  --filter-output <keys>              Filter output by key paths (e.g. foo,bar.baz,a[0,3])
+  --format <toon|json|yaml|md|jsonl>  Output format
+  --full-output                       Show full output envelope
+  --help                              Show help
+  --llms, --llms-full                 Print LLM-readable manifest
+  --mcp                               Start as MCP stdio server
+  --schema                            Show JSON Schema for command
+  --token-count                       Print token count of output (instead of output)
+  --token-limit <n>                   Limit output to n tokens
+  --token-offset <n>                  Skip first n tokens of output
+  --update                            Update to latest version
+  --version                           Show version
 ```
 
-## API
+## License
 
-### Modules
-
-| Entry                    | Module          | Contents                                                                    |
-| ------------------------ | --------------- | --------------------------------------------------------------------------- |
-| `handshakes`             | `Client`        | `create` and `discover`. Returns access tokens through the resolution order |
-|                          | `DeviceGrant`   | `start` and `wait` of the RFC 8628 device grant                             |
-|                          | `Exchange`      | `request` of the RFC 8693 token exchange                                    |
-|                          | `Identity`      | `token` and `detect`. Returns the subject token itself                      |
-|                          | `Metadata`      | RFC 8414 and RFC 9728 metadata, and the `WWW-Authenticate` challenge        |
-|                          | `Source`        | The platform sources, `defaults`, and `from`                                |
-|                          | `Store`         | `memory` and `from`                                                         |
-| `handshakes/node`        | `NodeSource`    | `buildkite`, `file`, and `defaults`                                         |
-|                          | `Store`         | `file` and `keychain`                                                       |
-| `handshakes/server`      | `Policy`        | `githubActions`, `vercel`, and `from`                                       |
-|                          | `Resource`      | `create`, with `verify`, `metadata`, and `challenge`                        |
-|                          | `Server`        | `create`, with the RFC 8693 token endpoint and its metadata                 |
-| `handshakes/better-auth` | `tokenExchange` | The Better Auth plugin                                                      |
-| `handshakes/test`        | `Issuer`        | `create`, with `sign`, `env`, and `close`                                   |
-
-### Sources
-
-`Source.defaults` holds the `Source` entries below, in priority order. `NodeSource.defaults` adds Buildkite.
-
-| Source                   | Detects                       | Audience                                 |
-| ------------------------ | ----------------------------- | ---------------------------------------- |
-| `Source.vercel()`        | `VERCEL`, `VERCEL_OIDC_TOKEN` | Any                                      |
-| `Source.githubActions()` | `GITHUB_ACTIONS`              | Any                                      |
-| `Source.gitlab()`        | `GITLAB_CI`                   | Fixed in `id_tokens` of `.gitlab-ci.yml` |
-| `Source.circleci()`      | `CIRCLECI`                    | Fixed                                    |
-| `Source.gcp()`           | `K_SERVICE`                   | Any                                      |
-| `NodeSource.buildkite()` | `BUILDKITE`                   | Any                                      |
-| `NodeSource.file()`      | The file exists               | Fixed in the pod spec                    |
+[MIT](LICENSE)
