@@ -4,8 +4,9 @@ import * as Context from '../Context.js'
 
 export default Cli.command({
   args: z.object({ ...Context.args.shape }),
-  description: 'Revokes the refresh token (RFC 7009) and deletes the stored grant. Alias: logout.',
-  options: z.object({ ...Context.options.shape }),
+  description: 'Revokes the refresh token (RFC 7009) and deletes the stored grant.',
+  // The command requests no access token, so `interactive` and `source` do not apply.
+  options: Context.options.omit({ interactive: true, source: true }),
   async run(c) {
     try {
       await Context.client(c).client.revoke()

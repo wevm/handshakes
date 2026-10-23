@@ -110,7 +110,7 @@ handshakes fetch example https://api.example.com/v1/items -i
 - **Type:** `boolean`
 - **Default:** `false`
 
-Exits with code 22 when the response status is 400 or more, as `curl --fail` does. The body still prints.
+Exits with code 22 when the response status is 400 or more, as `curl --fail` does. The output still holds the response, as with `curl --fail-with-body`, also with `--json`. An [MCP](/cli/mcp) agent reads `status` from the result instead.
 
 ```sh
 # Stops a script when the API returns an error
@@ -127,6 +127,29 @@ The OAuth client for the device grant and refresh. It also applies to discovery.
 ```sh
 # Discovers the server, and uses this client for the device grant
 handshakes fetch https://api.example.com/v1/items --client-id example-cli
+```
+
+### --client-secret-env
+
+- **Type:** `string`
+
+The environment variable that holds the client secret, for a server that requires one, such as [Google](/guides/services/google-oauth). The CLI reads no secret from argv, and a profile cannot name the variable.
+
+```sh
+# Refreshes the grant of a server that requires a client secret
+handshakes fetch example https://api.example.com/v1/items --client-secret-env EXAMPLE_CLIENT_SECRET
+```
+
+### --interactive
+
+- **Type:** `boolean`
+- **Default:** `true` when stdin is a terminal and `CI` is not set
+
+Runs the device grant when no source detects its platform and no grant is stored. `--no-interactive` never runs it, so the command exits with code 3 instead.
+
+```sh
+# In a script, exits with code 3 instead of waiting for approval
+handshakes fetch example https://api.example.com/v1/items --no-interactive
 ```
 
 ### --issuer
@@ -163,6 +186,18 @@ The space-separated scopes of the access token. It also applies to discovery.
 ```sh
 # Requests a token that can write
 handshakes fetch example https://api.example.com/v1/items -X POST -d '{}' --scope data:write
+```
+
+### --source
+
+- **Type:** `readonly string[]`
+- **Default:** every source
+
+Uses only the named source. Repeat the option for several sources. The CLI keeps the priority order of the sources, whatever the order of the options. The names are `vercel`, `githubActions`, `gitlab`, `circleci`, `buildkite`, and `gcp`.
+
+```sh
+# Exchanges only the subject token of GitHub Actions
+handshakes fetch example https://api.example.com/v1/items --source githubActions
 ```
 
 ## Token Scope
@@ -217,8 +252,9 @@ handshakes fetch example https://api.example.com/v1/items --json --filter-output
 | `INVALID_HEADER`         | 2         | A header has no `:` after its name.                                                         |
 | `OUTSIDE_RESOURCE`       | 2         | The URL is outside the resource or the origin of the profile.                               |
 | `NO_PROFILE`             | 2         | The profile argument names no profile, or the API names no authorization server for itself. |
+| `NO_CLIENT_SECRET`       | 2         | The variable that `--client-secret-env` names is not set.                                   |
+| `INVALID_SOURCE`         | 2         | `--source` names no source of the CLI.                                                      |
 | `AUTHORIZATION_REQUIRED` | 3         | No source detects its platform, no grant is stored, and the device grant cannot run.        |
-| `REJECTED`               | 4         | The server rejects a request with `invalid_grant`.                                          |
-| `HTTP_ERROR`             | 22        | With `--fail` and `--format`, the response status is 400 or more.                           |
-|                          | 22        | With `--fail` and no `--format`, the response status is 400 or more.                        |
-| `FAILED`                 | 1         | Another error, such as a rejected token exchange.                                           |
+| `REJECTED`               | 4         | The server rejects the token exchange with `invalid_grant`.                                 |
+|                          | 22        | With `--fail`, the response status is 400 or more. The output still holds the response.     |
+| `FAILED`                 | 1         | Another error, such as an issuer without metadata.                                          |

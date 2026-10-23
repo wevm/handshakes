@@ -7,13 +7,21 @@ import * as Os from 'node:os'
 import * as Path from 'node:path'
 import { z } from 'incur'
 import type * as Client from '../Client.js'
+import * as Errors from '../internal/Errors.js'
+import * as NodeSource from '../node/Source.js'
 
-/** Schemas of the configuration file. */
+/** Schemas of the configuration file. A misspelled setting fails, so no setting is dropped silently. */
 namespace schema {
-  export const profile = z.object({
+  /** Settings of the token exchange that one source can replace. */
+  const exchange = z.strictObject({
+    parameters: z.record(z.string(), z.string()).optional(),
+    subjectAudience: z.string().optional(),
+  })
+
+  export const profile = z.strictObject({
     clientId: z.string().optional(),
     endpoints: z
-      .object({
+      .strictObject({
         deviceAuthorization: z.string().optional(),
         revocation: z.string().optional(),
         token: z.string(),
@@ -21,8 +29,15 @@ namespace schema {
       .optional(),
     env: z.string().optional(),
     issuer: z.string().optional(),
+    parameters: exchange.shape.parameters,
     resource: z.string().optional(),
     scope: z.string().optional(),
+    sources: z
+      .strictObject(
+        Object.fromEntries(NodeSource.defaults.map((source) => [source.name, exchange.optional()])),
+      )
+      .optional(),
+    subjectAudience: exchange.shape.subjectAudience,
   })
 
   export const file = z.object({
@@ -34,7 +49,7 @@ namespace schema {
 }
 
 /** Thrown when a profile does not exist, or a configuration file is invalid. */
-export class ConfigError extends Error {
+export class ConfigError extends Errors.BaseError {
   override name = 'Profile.ConfigError'
 }
 
@@ -58,10 +73,14 @@ export function list(options: list.Options = {}): {
   // User configuration first, so the project file replaces its profiles.
   for (const file of [...files].reverse()) {
     const parsed = schema.file.safeParse(JSON.parse(Fs.readFileSync(file, 'utf8')))
-    if (!parsed.success)
+    if (!parsed.success) {
+      const issue = parsed.error.issues[0]
+      const path = issue?.path.join('.')
       throw new ConfigError(
-        `${file} is not a valid configuration file. To resolve: Fix the file so that it matches the profile schema in the README.`,
+        `${file} is not a valid configuration file: ${issue?.message ?? 'Invalid input'}${path ? ` at \`${path}\`` : ''}.`,
+        { steps: ['Fix the file so that it matches the profile schema in the README.'] },
       )
+    }
 
     fallback = parsed.data.default ?? fallback
     for (const [name, profile] of Object.entries(parsed.data.profiles ?? {}))
@@ -90,14 +109,19 @@ export function resolve(options: resolve.Options): Profile | undefined {
   const name = options.name ?? env['HANDSHAKES_PROFILE'] ?? all.default
   const profile = name ? all.profiles.find((entry) => entry.name === name) : undefined
   if (name && !profile && options.name)
-    throw new ConfigError(
-      `No profile is named ${name}. To resolve: Run \`handshakes profiles\` to list the profiles.`,
-    )
+    throw new ConfigError(`No profile is named ${name}.`, {
+      steps: ['Run `handshakes profiles` to list the profiles.'],
+    })
 
+  // Commands pass all of their options, so only the keys of a profile setting apply.
+  const keys = ['clientId', 'issuer', 'resource', 'scope'] as const
   const merged = {
     ...profile,
     ...Object.fromEntries(
-      Object.entries(options.overrides ?? {}).filter((entry) => entry[1] !== undefined),
+      keys.flatMap((key) => {
+        const value = options.overrides?.[key]
+        return value === undefined ? [] : [[key, value]]
+      }),
     ),
   } as Profile
   if (!merged.issuer && !merged.endpoints) return undefined

@@ -11,10 +11,10 @@ handshakes mcp add
 
 The server serves two tools, `fetch` and `status`.
 
-| Tool                    | Input                                                | Output                                    |
-| ----------------------- | ---------------------------------------------------- | ----------------------------------------- |
-| [`fetch`](/cli/fetch)   | `profile`, `url`, `method`, `header`, `data`, `fail` | `status`, `headers`, and `body`           |
-| [`status`](/cli/status) | `profile`, `clientId`, `issuer`, `resource`, `scope` | The detected source, and the stored grant |
+| Tool                    | Input                                                                         | Output                                    |
+| ----------------------- | ----------------------------------------------------------------------------- | ----------------------------------------- |
+| [`fetch`](/cli/fetch)   | `profile`, `url`, `method`, `header`, `data`                                  | `status`, `headers`, and `body`           |
+| [`status`](/cli/status) | `profile`, `clientId`, `interactive`, `issuer`, `resource`, `scope`, `source` | The detected source, and the stored grant |
 
 There is no `token` tool and no `exec` tool. A token in the context of a model can reach a log, a transcript, or another tool. The `fetch` tool sends the token itself, and returns only the response.
 
@@ -23,7 +23,9 @@ There is no `token` tool and no `exec` tool. A token in the context of a model c
 Under `--mcp`, the `fetch` tool accepts fewer inputs than the `fetch` command:
 
 - **No profile overrides:** The tool takes no `issuer`, `resource`, `clientId`, or `scope`. A prompt cannot direct a token to another server or widen its scopes.
+- **No secrets:** The tool takes no `clientSecretEnv`, so a prompt cannot send the value of a variable to a server.
 - **No files:** `data` is the request body itself. The tool never reads `@file`, so a prompt cannot read a local file.
+- **No exit code:** The tool takes no `fail`. The agent reads `status` from the result.
 
 The origin and resource checks of the [`fetch`](/cli/fetch) command still apply. Without a profile, the tool discovers the authorization server from the RFC 9728 metadata of the API.
 

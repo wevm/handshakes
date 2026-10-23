@@ -66,15 +66,15 @@ An invalid option throws a `TypeError` instead, and its message names the fix. F
 
 `Client.RejectedError`, `DeviceGrant.RejectedError`, and `Exchange.RejectedError` hold the `error` and `error_description` of the response ([RFC 6749 §5.2](https://www.rfc-editor.org/rfc/rfc6749#section-5.2)). Their steps follow from `error`:
 
-| `error`                                         | Steps                                                                                                                        |
-| ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `invalid_client`                                | Check that `clientId` names a registered client. Set `clientSecret` if the server requires one.                              |
-| `invalid_grant` on an exchange                  | Check that a trust policy matches the issuer, audience, and claims of the subject token, and that the token has not expired. |
-| `invalid_grant` on a refresh                    | Run `authorize` to start a new grant.                                                                                        |
-| `invalid_scope`                                 | Request only scopes that the client, or the trust policy, allows.                                                            |
-| `invalid_target`                                | Check `resource`, and that the server allows the client to request it ([RFC 8707](https://www.rfc-editor.org/rfc/rfc8707)).  |
-| `unauthorized_client`, `unsupported_grant_type` | Check that the server supports the grant, and registers the client for it.                                                   |
-| Other                                           | Read `errorDescription`, and the documentation of the server.                                                                |
+| `error`                                         | Steps                                                                                                                              |
+| ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| `invalid_client`                                | Check that `clientId` names a registered client. Set `clientSecret` (`--client-secret-env` in the CLI) if the server requires one. |
+| `invalid_grant` on an exchange                  | Check that a trust policy matches the issuer, audience, and claims of the subject token, and that the token has not expired.       |
+| `invalid_grant` on a refresh                    | Run `authorize` to start a new grant.                                                                                              |
+| `invalid_scope`                                 | Request only scopes that the client, or the trust policy, allows.                                                                  |
+| `invalid_target`                                | Check `resource`, and that the server allows the client to request it ([RFC 8707](https://www.rfc-editor.org/rfc/rfc8707)).        |
+| `unauthorized_client`, `unsupported_grant_type` | Check that the server supports the grant, and registers the client for it.                                                         |
+| Other                                           | Read `errorDescription`, and the documentation of the server.                                                                      |
 
 A response without `error` but with an error status carries `server_error`. A successful response that lacks a required field carries `invalid_response`, with HTTP status `200`.
 

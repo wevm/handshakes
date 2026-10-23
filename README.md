@@ -235,32 +235,59 @@ The `handshakes` CLI resolves an access token in the same order as `Client`. A p
       "env": "EXAMPLE_API_KEY",
       "issuer": "https://auth.example.com",
       "scope": "data:read"
+    },
+    "gcp": {
+      "endpoints": { "token": "https://sts.googleapis.com/v1/token" },
+      "scope": "https://www.googleapis.com/auth/cloud-platform",
+      "sources": {
+        "githubActions": {
+          "parameters": {
+            "audience": "//iam.googleapis.com/projects/<number>/locations/global/workloadIdentityPools/<pool>/providers/github"
+          },
+          "subjectAudience": "https://iam.googleapis.com/projects/<number>/locations/global/workloadIdentityPools/<pool>/providers/github"
+        }
+      }
+    },
+    "openrouter": {
+      "endpoints": { "token": "https://openrouter.ai/api/v1/oauth/token" },
+      "env": "OPENROUTER_API_KEY",
+      "parameters": { "federation_policy_id": "<policy id>" },
+      "subjectAudience": "https://openrouter.ai"
     }
   }
 }
 ```
 
+The settings of a profile are options of `Client.create`, except `env`, the variable of `exec`. `sources` holds `parameters` and `subjectAudience` for one source, the JSON form of `Client.PerSource`. An unknown setting fails, so no setting is dropped silently.
+
 ```sh
 # Runs the device grant and stores the grant.
 handshakes authorize example
 
+# Reads the client secret from a variable, for a server such as Google. The CLI reads no secret from argv.
+handshakes authorize example --client-secret-env EXAMPLE_CLIENT_SECRET
+
 # Runs the tests with an access token in `EXAMPLE_API_KEY`.
 handshakes exec example -- pnpm test
+
+# Exchanges only the OIDC token of GitHub Actions, and never runs the device grant.
+handshakes token openrouter --source githubActions --no-interactive
 ```
 
 ```txt
 $ handshakes --help
-handshakes — Resolves short-lived OAuth access tokens from the platform identity or a stored grant, in place of stored API keys.
+handshakes@0.0.0 — Resolves short-lived OAuth access tokens from the platform identity or a stored grant, in place of stored API keys.
 
 Usage: handshakes <command>
 
 Commands:
-  authorize  Runs the device grant (RFC 8628) and stores the grant. Alias: login.
+  authorize  Runs the device grant (RFC 8628) and stores the grant.
   exec       Runs the command after `--` with an access token in an environment variable, then exits with its code.
-  login      Runs the device grant (RFC 8628) and stores the grant. Alias: login.
-  logout     Revokes the refresh token (RFC 7009) and deletes the stored grant. Alias: logout.
+  fetch      Sends a request with an access token, and prints the response body. Without a profile, discovers the authorization server from the API.
+  login      Runs the device grant (RFC 8628) and stores the grant. Alias of authorize.
+  logout     Revokes the refresh token (RFC 7009) and deletes the stored grant. Alias of revoke.
   profiles   Lists the profiles, the file of each, and the default profile.
-  revoke     Revokes the refresh token (RFC 7009) and deletes the stored grant. Alias: logout.
+  revoke     Revokes the refresh token (RFC 7009) and deletes the stored grant.
   status     Names the source that detects its platform here and, for a profile, the stored grant and its expiry.
   token      Prints the access token of a profile. With --audience, prints the OIDC token that the platform signs for this code.
 
@@ -283,6 +310,20 @@ Global Options:
   --update                            Update to latest version
   --version                           Show version
 ```
+
+### Exit Codes
+
+| Code  | Meaning                                                                          |
+| ----- | -------------------------------------------------------------------------------- |
+| 0     | Success                                                                          |
+| 1     | Unexpected error                                                                 |
+| 2     | Invalid usage, such as an unknown profile, an unknown source, or an unset secret |
+| 3     | Authorization required: no source, no grant, and not interactive                 |
+| 4     | The server rejected the subject token with `invalid_grant`                       |
+| 22    | `fetch --fail` received HTTP 400 or more. The output still holds the response    |
+| Other | `exec` returns the exit code of the child                                        |
+
+If the server rejects the refresh token of a grant, the CLI deletes the grant. It then runs the device grant, or exits with 3 when it is not interactive.
 
 ## License
 

@@ -41,7 +41,7 @@ handshakes token
 
 - **Type:** `string`
 
-The `aud` of a subject token. The CLI requests the token from the first source that detects its platform, such as GitHub Actions, and prints it. The token must carry this audience.
+The `aud` of a subject token. The CLI requests the token from the first source that detects its platform, such as GitHub Actions, and prints it. The token must carry this audience. `--source` limits the sources.
 
 ```sh
 # In GitHub Actions, prints the OIDC token of the job for the API
@@ -60,6 +60,29 @@ The OAuth client for the device grant and refresh.
 ```sh
 # Uses this client for the stored grant
 handshakes token example --client-id example-cli
+```
+
+### --client-secret-env
+
+- **Type:** `string`
+
+The environment variable that holds the client secret, for a server that requires one, such as [Google](/guides/services/google-oauth). The CLI reads no secret from argv, and a profile cannot name the variable.
+
+```sh
+# Refreshes the grant of a server that requires a client secret
+handshakes token example --client-secret-env EXAMPLE_CLIENT_SECRET
+```
+
+### --interactive
+
+- **Type:** `boolean`
+- **Default:** `true` when stdin is a terminal and `CI` is not set
+
+Runs the device grant when no source detects its platform and no grant is stored. `--no-interactive` never runs it, so the command exits with code 3 instead.
+
+```sh
+# In a script, exits with code 3 instead of waiting for approval
+handshakes token example --no-interactive
 ```
 
 ### --issuer
@@ -98,6 +121,18 @@ The space-separated scopes of the access token.
 handshakes token example --scope data:write
 ```
 
+### --source
+
+- **Type:** `readonly string[]`
+- **Default:** every source
+
+Uses only the named source. Repeat the option for several sources. The CLI keeps the priority order of the sources, whatever the order of the options. The names are `vercel`, `githubActions`, `gitlab`, `circleci`, `buildkite`, and `gcp`.
+
+```sh
+# Exchanges only the subject token of GitHub Actions
+handshakes token example --source githubActions
+```
+
 ## Output
 
 Without `--format`, the CLI prints the token alone, followed by a line break. With `--format`, such as `--json`, the CLI prints these fields:
@@ -116,9 +151,11 @@ handshakes token example --json --filter-output expiresAt
 | Error code               | Exit code | Condition                                                                               |
 | ------------------------ | --------- | --------------------------------------------------------------------------------------- |
 | `NO_PROFILE`             | 2         | No profile applies and `--issuer` is not set, or the profile argument names no profile. |
+| `NO_CLIENT_SECRET`       | 2         | The variable that `--client-secret-env` names is not set.                               |
+| `INVALID_SOURCE`         | 2         | `--source` names no source of the CLI.                                                  |
 | `AUTHORIZATION_REQUIRED` | 3         | No source detects its platform, no grant is stored, and the device grant cannot run.    |
 | `SOURCE_NOT_FOUND`       | 3         | With `--audience`, no source detects its platform.                                      |
-| `REJECTED`               | 4         | The server rejects a request with `invalid_grant`.                                      |
+| `REJECTED`               | 4         | The server rejects the token exchange with `invalid_grant`.                             |
 | `AUDIENCE_MISMATCH`      | 1         | With `--audience`, the token of the source carries another `aud`.                       |
 | `SOURCE_FAILED`          | 1         | With `--audience`, the detected source fails, such as a job without `id-token: write`.  |
-| `FAILED`                 | 1         | Another error, such as a rejected token exchange.                                       |
+| `FAILED`                 | 1         | Another error, such as an issuer without metadata.                                      |

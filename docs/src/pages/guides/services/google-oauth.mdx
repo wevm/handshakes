@@ -69,7 +69,27 @@ The device grant of Google allows only a short list of scopes, such as `openid` 
 
 ### The CLI
 
-The CLI reads no client secret. So `handshakes authorize` cannot run the device grant against Google. Run the grant through `Client.create` in code.
+`--client-secret-env` names the variable that holds the client secret. The CLI reads no secret from argv, and a [CLI profile](/cli/configuration) cannot name the variable.
+
+```json [handshakes.json]
+{
+  "profiles": {
+    "google": {
+      "clientId": "<client id>.apps.googleusercontent.com",
+      "issuer": "https://accounts.google.com",
+      "scope": "openid email"
+    }
+  }
+}
+```
+
+```sh
+# Runs the device grant with the client secret from GOOGLE_CLIENT_SECRET
+handshakes authorize google --client-secret-env GOOGLE_CLIENT_SECRET
+
+# Refreshes the grant when it expires soon, which also needs the client secret
+curl -H "Authorization: Bearer $(handshakes token google --client-secret-env GOOGLE_CLIENT_SECRET)" https://openidconnect.googleapis.com/v1/userinfo
+```
 
 ## More
 

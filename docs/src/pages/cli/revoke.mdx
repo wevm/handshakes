@@ -47,6 +47,17 @@ The OAuth client of the grant.
 handshakes revoke example --client-id example-cli
 ```
 
+### --client-secret-env
+
+- **Type:** `string`
+
+The environment variable that holds the client secret, for a server that requires one, such as [Google](/guides/services/google-oauth). The CLI reads no secret from argv, and a profile cannot name the variable.
+
+```sh
+# Authenticates the revocation with the client secret from EXAMPLE_CLIENT_SECRET
+handshakes revoke example --client-secret-env EXAMPLE_CLIENT_SECRET
+```
+
 ### --issuer
 
 - **Type:** `string`
@@ -89,7 +100,8 @@ handshakes revoke example --scope data:read
 
 ## Errors
 
-| Error code   | Exit code | Condition                                                                               |
-| ------------ | --------- | --------------------------------------------------------------------------------------- |
-| `NO_PROFILE` | 2         | No profile applies and `--issuer` is not set, or the profile argument names no profile. |
-| `FAILED`     | 1         | The revocation endpoint returns HTTP 500 or more, or the issuer serves no metadata.     |
+| Error code         | Exit code | Condition                                                                               |
+| ------------------ | --------- | --------------------------------------------------------------------------------------- |
+| `NO_PROFILE`       | 2         | No profile applies and `--issuer` is not set, or the profile argument names no profile. |
+| `NO_CLIENT_SECRET` | 2         | The variable that `--client-secret-env` names is not set.                               |
+| `FAILED`           | 1         | The revocation endpoint returns HTTP 500 or more, or the issuer serves no metadata.     |

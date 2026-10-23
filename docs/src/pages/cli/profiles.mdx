@@ -39,7 +39,7 @@ The CLI reads the files in the order of the [configuration](/cli/configuration).
 
 ## Errors
 
-| Error code   | Exit code | Condition                                 |
-| ------------ | --------- | ----------------------------------------- |
-| `NO_PROFILE` | 2         | A file does not match the profile schema. |
-| `FAILED`     | 1         | A file is not valid JSON.                 |
+| Error code   | Exit code | Condition                                                           |
+| ------------ | --------- | ------------------------------------------------------------------- |
+| `NO_PROFILE` | 2         | A file does not match the profile schema, such as an unknown field. |
+| `FAILED`     | 1         | A file is not valid JSON.                                           |

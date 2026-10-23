@@ -424,8 +424,11 @@ export class DiscoveryError extends Errors.BaseError {
   }
 }
 
-/** A value, or a function of the detected source, such as the per-provider `audience` of Google STS. */
-export type PerSource<value> = value | ((source: Source.Source) => value)
+/**
+ * A value, or a function of the detected source, such as the per-provider `audience` of Google STS.
+ * A function returns `undefined` for a source that takes the default.
+ */
+export type PerSource<value> = value | ((source: Source.Source) => value | undefined)
 
 /** Thrown when the token or revocation endpoint rejects a request with an RFC 6749 §5.2 error. */
 export class RejectedError extends Errors.BaseError {
@@ -509,7 +512,7 @@ function perSource<value>(
   source: Source.Source,
 ): value | undefined {
   return typeof option === 'function'
-    ? (option as (source: Source.Source) => value)(source)
+    ? (option as (source: Source.Source) => value | undefined)(source)
     : option
 }
 

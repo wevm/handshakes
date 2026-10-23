@@ -64,21 +64,28 @@ The `exec`, `fetch`, and `token` commands resolve the access token in this order
 
 1. If a source detects its platform, such as GitHub Actions, the CLI exchanges the subject token of the platform (RFC 8693).
 2. If a grant is stored for the profile, the CLI uses it, and refreshes it under a lock when it expires soon.
-3. If stdin is a terminal and `CI` is not set, the CLI runs the device grant and stores the grant.
+3. If the CLI is interactive, it runs the device grant and stores the grant.
 4. Otherwise, the command exits with code 3 and `AUTHORIZATION_REQUIRED`.
 
-A detected source that fails stops the command. The CLI never tries the next source, since that can select a different identity. The CLI detects the sources of `handshakes/node`: `vercel`, `githubActions`, `gitlab`, `circleci`, `buildkite`, and `gcp`, in this order.
+A detected source that fails stops the command. The CLI never tries the next source, since that can select a different identity. The CLI detects the sources of `handshakes/node`: `vercel`, `githubActions`, `gitlab`, `circleci`, `buildkite`, and `gcp`, in this order. `--source` limits the CLI to the named sources.
+
+The CLI is interactive when stdin is a terminal and `CI` is not set. `--interactive` makes it interactive without a terminal, and `--no-interactive` turns it off.
 
 ## Shared Options
 
-Every command that takes a profile accepts these options. Each option replaces the setting of the profile for one run.
+Every command that takes a profile accepts these options. An option with a field in the Replaces column replaces that setting of the profile for one run.
 
-| Option        | Replaces   | Description                                    |
-| ------------- | ---------- | ---------------------------------------------- |
-| `--client-id` | `clientId` | OAuth client for the device grant and refresh. |
-| `--issuer`    | `issuer`   | Authorization server.                          |
-| `--resource`  | `resource` | RFC 8707 resource of the access token.         |
-| `--scope`     | `scope`    | Space-separated scopes.                        |
+| Option                              | Replaces   | Description                                                                 |
+| ----------------------------------- | ---------- | --------------------------------------------------------------------------- |
+| `--client-id`                       | `clientId` | OAuth client for the device grant and refresh.                              |
+| `--client-secret-env`               |            | Environment variable that holds the client secret. Never the secret itself. |
+| `--interactive`, `--no-interactive` |            | Runs the device grant when no grant applies, or never runs it.              |
+| `--issuer`                          | `issuer`   | Authorization server.                                                       |
+| `--resource`                        | `resource` | RFC 8707 resource of the access token.                                      |
+| `--scope`                           | `scope`    | Space-separated scopes.                                                     |
+| `--source`                          |            | Uses only this source. Repeatable.                                          |
+
+[`authorize`](/cli/authorize) and [`revoke`](/cli/revoke) take no `--interactive` or `--source`. [`status`](/cli/status) sends no request, so it takes no `--client-secret-env`.
 
 ## Output
 
@@ -118,22 +125,22 @@ Incur, the CLI framework, adds these options to every command.
 | `--token-limit <n>`                      | Limits the output to `n` tokens of a language model.        |
 | `--token-offset <n>`                     | Skips the first `n` tokens of the output.                   |
 
-The token options count tokens of a language model, not OAuth tokens. The root help also lists `--update` and `--version`, and begins with the list of commands:
+The token options count tokens of a language model, not OAuth tokens. The root help also lists `--update` and `--version`. `--version` prints the version of the package. The root help begins with the version and the list of commands:
 
 ```txt
 $ handshakes --help
-handshakes — Resolves short-lived OAuth access tokens from the platform identity or a stored grant, in place of stored API keys.
+handshakes@0.0.0 — Resolves short-lived OAuth access tokens from the platform identity or a stored grant, in place of stored API keys.
 
 Usage: handshakes <command>
 
 Commands:
-  authorize  Runs the device grant (RFC 8628) and stores the grant. Alias: login.
+  authorize  Runs the device grant (RFC 8628) and stores the grant.
   exec       Runs the command after `--` with an access token in an environment variable, then exits with its code.
   fetch      Sends a request with an access token, and prints the response body. Without a profile, discovers the authorization server from the API.
-  login      Runs the device grant (RFC 8628) and stores the grant. Alias: login.
-  logout     Revokes the refresh token (RFC 7009) and deletes the stored grant. Alias: logout.
+  login      Runs the device grant (RFC 8628) and stores the grant. Alias of authorize.
+  logout     Revokes the refresh token (RFC 7009) and deletes the stored grant. Alias of revoke.
   profiles   Lists the profiles, the file of each, and the default profile.
-  revoke     Revokes the refresh token (RFC 7009) and deletes the stored grant. Alias: logout.
+  revoke     Revokes the refresh token (RFC 7009) and deletes the stored grant.
   status     Names the source that detects its platform here and, for a profile, the stored grant and its expiry.
   token      Prints the access token of a profile. With --audience, prints the OIDC token that the platform signs for this code.
 
@@ -145,16 +152,16 @@ Integrations:
 
 ## Exit Codes
 
-| Code  | Error codes                                                                               | Condition                                                                                         |
-| ----- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
-| 0     |                                                                                           | The command succeeds.                                                                             |
-| 1     | `FAILED`, `AUDIENCE_MISMATCH`, `SOURCE_FAILED`, `UNKNOWN`, `COMMAND_NOT_FOUND`            | Another error, such as an issuer without metadata, a rejected token exchange, or an unknown flag. |
-| 2     | `NO_PROFILE`, `NO_COMMAND`, `NO_URL`, `INVALID_ENV`, `INVALID_HEADER`, `OUTSIDE_RESOURCE` | Invalid usage, such as an unknown profile or no command after `--`.                               |
-| 3     | `AUTHORIZATION_REQUIRED`, `SOURCE_NOT_FOUND`                                              | No source detects its platform, no grant is stored, and the device grant cannot run.              |
-| 4     | `REJECTED`                                                                                | The server rejects a request with `invalid_grant` (`Client.RejectedError`).                       |
-| 22    | `HTTP_ERROR`                                                                              | `fetch --fail` receives HTTP 400 or more.                                                         |
-| 127   |                                                                                           | `exec` cannot start the command.                                                                  |
-| Other |                                                                                           | `exec` exits with the exit code of the command.                                                   |
+| Code  | Error codes                                                                                                                     | Condition                                                                                           |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| 0     |                                                                                                                                 | The command succeeds.                                                                               |
+| 1     | `FAILED`, `AUDIENCE_MISMATCH`, `SOURCE_FAILED`, `UNKNOWN`, `COMMAND_NOT_FOUND`                                                  | Another error, such as an issuer without metadata, another error of the server, or an unknown flag. |
+| 2     | `NO_PROFILE`, `NO_COMMAND`, `NO_URL`, `NO_CLIENT_SECRET`, `INVALID_ENV`, `INVALID_HEADER`, `INVALID_SOURCE`, `OUTSIDE_RESOURCE` | Invalid usage, such as an unknown profile, an unknown source, or no command after `--`.             |
+| 3     | `AUTHORIZATION_REQUIRED`, `SOURCE_NOT_FOUND`                                                                                    | No source detects its platform, no grant is stored, and the device grant cannot run.                |
+| 4     | `REJECTED`                                                                                                                      | The server rejects the token exchange with `invalid_grant` (`Exchange.RejectedError`).              |
+| 22    |                                                                                                                                 | `fetch --fail` receives HTTP 400 or more. The output still holds the response.                      |
+| 127   |                                                                                                                                 | `exec` cannot start the command.                                                                    |
+| Other |                                                                                                                                 | `exec` exits with the exit code of the command.                                                     |
 
 A refresh that receives `invalid_grant` deletes the stored grant. The next step of the resolution order then applies, so the command runs the device grant or exits with code 3.
 

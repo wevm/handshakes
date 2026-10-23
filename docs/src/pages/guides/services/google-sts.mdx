@@ -101,7 +101,37 @@ const client = Client.create({
 
 ### The CLI
 
-A CLI profile holds no `parameters` or `subjectAudience`. So `handshakes exec` and `handshakes token` cannot run this exchange. Request the token through `Client.create` in code.
+A [CLI profile](/cli/configuration) holds the same settings. `sources` holds the `parameters` and `subjectAudience` of each platform, the JSON form of the functions above.
+
+```json [handshakes.json]
+{
+  "profiles": {
+    "gcp": {
+      "endpoints": { "token": "https://sts.googleapis.com/v1/token" },
+      "scope": "https://www.googleapis.com/auth/cloud-platform",
+      "sources": {
+        "githubActions": {
+          "parameters": {
+            "audience": "//iam.googleapis.com/projects/123456789/locations/global/workloadIdentityPools/ci/providers/github"
+          },
+          "subjectAudience": "https://iam.googleapis.com/projects/123456789/locations/global/workloadIdentityPools/ci/providers/github"
+        },
+        "vercel": {
+          "parameters": {
+            "audience": "//iam.googleapis.com/projects/123456789/locations/global/workloadIdentityPools/ci/providers/vercel"
+          },
+          "subjectAudience": "https://iam.googleapis.com/projects/123456789/locations/global/workloadIdentityPools/ci/providers/vercel"
+        }
+      }
+    }
+  }
+}
+```
+
+```sh
+# Lists the objects of a bucket with the exchanged token
+curl -H "Authorization: Bearer $(handshakes token gcp)" https://storage.googleapis.com/storage/v1/b/acme-data/o
+```
 
 ## More
 

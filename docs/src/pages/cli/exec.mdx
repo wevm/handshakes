@@ -76,6 +76,29 @@ The OAuth client for the device grant and refresh.
 handshakes exec example --client-id example-cli -- pnpm test
 ```
 
+### --client-secret-env
+
+- **Type:** `string`
+
+The environment variable that holds the client secret, for a server that requires one, such as [Google](/guides/services/google-oauth). The CLI reads no secret from argv, and a profile cannot name the variable.
+
+```sh
+# Refreshes the grant of a server that requires a client secret
+handshakes exec example --client-secret-env EXAMPLE_CLIENT_SECRET -- pnpm test
+```
+
+### --interactive
+
+- **Type:** `boolean`
+- **Default:** `true` when stdin is a terminal and `CI` is not set
+
+Runs the device grant when no source detects its platform and no grant is stored. `--no-interactive` never runs it, so the command exits with code 3 instead.
+
+```sh
+# In CI, never waits for approval of a device code
+handshakes exec example --no-interactive -- pnpm test
+```
+
 ### --issuer
 
 - **Type:** `string`
@@ -112,6 +135,18 @@ The space-separated scopes of the access token.
 handshakes exec example --scope data:read -- pnpm test
 ```
 
+### --source
+
+- **Type:** `readonly string[]`
+- **Default:** every source
+
+Uses only the named source. Repeat the option for several sources. The CLI keeps the priority order of the sources, whatever the order of the options. The names are `vercel`, `githubActions`, `gitlab`, `circleci`, `buildkite`, and `gcp`.
+
+```sh
+# Exchanges only the subject token of GitHub Actions
+handshakes exec example --source githubActions -- pnpm test
+```
+
 ## Behavior
 
 The command inherits the environment, stdin, stdout, and stderr of the CLI. The CLI adds only the token variable.
@@ -133,9 +168,11 @@ Other processes of the same user can read the environment of the command. This i
 | `NO_COMMAND`             | 2         | No command follows `--`.                                                                |
 | `NO_PROFILE`             | 2         | No profile applies and `--issuer` is not set, or the profile argument names no profile. |
 | `INVALID_ENV`            | 2         | The variable name is not valid, or the CLI refuses it.                                  |
+| `NO_CLIENT_SECRET`       | 2         | The variable that `--client-secret-env` names is not set.                               |
+| `INVALID_SOURCE`         | 2         | `--source` names no source of the CLI.                                                  |
 | `AUTHORIZATION_REQUIRED` | 3         | No source detects its platform, no grant is stored, and the device grant cannot run.    |
-| `REJECTED`               | 4         | The server rejects a request with `invalid_grant`.                                      |
-| `FAILED`                 | 1         | Another error, such as a rejected token exchange.                                       |
+| `REJECTED`               | 4         | The server rejects the token exchange with `invalid_grant`.                             |
+| `FAILED`                 | 1         | Another error, such as an issuer without metadata.                                      |
 |                          | 127       | The command cannot start, such as a program that does not exist.                        |
 |                          | 1         | The command stops on a signal.                                                          |
 |                          | Other     | The exit code of the command.                                                           |

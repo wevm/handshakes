@@ -54,6 +54,17 @@ The OAuth client for the device grant and refresh. The server must register the 
 handshakes authorize example --client-id example-cli
 ```
 
+### --client-secret-env
+
+- **Type:** `string`
+
+The environment variable that holds the client secret, for a server that requires one, such as [Google](/guides/services/google-oauth). The CLI reads no secret from argv, and a profile cannot name the variable.
+
+```sh
+# Sends the client secret from EXAMPLE_CLIENT_SECRET with the device grant
+handshakes authorize example --client-secret-env EXAMPLE_CLIENT_SECRET
+```
+
 ### --issuer
 
 - **Type:** `string`
@@ -100,8 +111,9 @@ The output never holds a token value.
 
 ## Errors
 
-| Error code   | Exit code | Condition                                                                                                |
-| ------------ | --------- | -------------------------------------------------------------------------------------------------------- |
-| `NO_PROFILE` | 2         | No profile applies and `--issuer` is not set, or the profile argument names no profile.                  |
-| `FAILED`     | 1         | No `clientId` is set, the server has no device authorization endpoint, or the user denies the code.      |
-| `FAILED`     | 1         | The user code expires before approval, the server rejects the request, or the issuer serves no metadata. |
+| Error code         | Exit code | Condition                                                                                                |
+| ------------------ | --------- | -------------------------------------------------------------------------------------------------------- |
+| `NO_PROFILE`       | 2         | No profile applies and `--issuer` is not set, or the profile argument names no profile.                  |
+| `NO_CLIENT_SECRET` | 2         | The variable that `--client-secret-env` names is not set.                                                |
+| `FAILED`           | 1         | No `clientId` is set, the server has no device authorization endpoint, or the user denies the code.      |
+| `FAILED`           | 1         | The user code expires before approval, the server rejects the request, or the issuer serves no metadata. |

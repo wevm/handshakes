@@ -41,7 +41,7 @@ export function oauth(
   if (error === 'invalid_client')
     return [
       'Check that `clientId` names a client that the server registers.',
-      'If the server requires a client secret, set `clientSecret`.',
+      'If the server requires a client secret, set `clientSecret` (`--client-secret-env` in the CLI).',
     ]
   if (error === 'invalid_scope')
     return ['Request only scopes that the client, or the trust policy, allows.']

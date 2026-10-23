@@ -413,7 +413,7 @@ type Status =
 
 ### Client.PerSource
 
-A value, or a function of the detected source. `parameters` and `subjectAudience` take this type, such as a different `audience` field for each provider of Google STS.
+A value, or a function of the detected source. `parameters` and `subjectAudience` take this type, such as a different `audience` field for each provider of Google STS. A function returns `undefined` for a source that takes the default.
 
 ```ts
 import { Client } from 'handshakes'

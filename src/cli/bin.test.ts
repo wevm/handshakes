@@ -3,7 +3,7 @@ import * as ChildProcess from 'node:child_process'
 import * as Fs from 'node:fs'
 import * as Path from 'node:path'
 import * as Esbuild from 'esbuild'
-import { Policy, Resource } from 'handshakes/server'
+import { Policy, Resource, Server as ExchangeServer } from 'handshakes/server'
 import { Issuer } from 'handshakes/test'
 import * as Http from '../../test/Http.js'
 import * as Server from '../../test/Server.js'
@@ -12,10 +12,17 @@ describe('handshakes', () => {
   let bin: string
   let dir: string
 
+  const version = (
+    JSON.parse(
+      Fs.readFileSync(Path.join(import.meta.dirname, '..', '..', 'package.json'), 'utf8'),
+    ) as { version: string }
+  ).version
+
   // Node cannot resolve the source's `.js` specifiers to `.ts`, so the CLI runs as a bundle. The
-  // bundle stays inside the repository, so it resolves the package's dependencies.
+  // bundle stays inside the repository, so it resolves the package's dependencies. It lies two
+  // directories below the root, as `dist/cli/bin.js` does, so it reads the version of the package.
   beforeAll(async () => {
-    dir = Fs.mkdtempSync(Path.join(import.meta.dirname, '.bin-'))
+    dir = Fs.mkdtempSync(Path.join(import.meta.dirname, '..', '.bin-'))
     bin = Path.join(dir, 'bin.mjs')
     await Esbuild.build({
       bundle: true,
@@ -60,19 +67,19 @@ describe('handshakes', () => {
     const result = await run(['--help'])
 
     expect(result.status).toMatchInlineSnapshot(`0`)
-    expect(result.stdout).toMatchInlineSnapshot(`
-      "handshakes — Resolves short-lived OAuth access tokens from the platform identity or a stored grant, in place of stored API keys.
+    expect(result.stdout.replace(version, '<version>')).toMatchInlineSnapshot(`
+      "handshakes@<version> — Resolves short-lived OAuth access tokens from the platform identity or a stored grant, in place of stored API keys.
 
       Usage: handshakes <command>
 
       Commands:
-        authorize  Runs the device grant (RFC 8628) and stores the grant. Alias: login.
+        authorize  Runs the device grant (RFC 8628) and stores the grant.
         exec       Runs the command after \`--\` with an access token in an environment variable, then exits with its code.
         fetch      Sends a request with an access token, and prints the response body. Without a profile, discovers the authorization server from the API.
-        login      Runs the device grant (RFC 8628) and stores the grant. Alias: login.
-        logout     Revokes the refresh token (RFC 7009) and deletes the stored grant. Alias: logout.
+        login      Runs the device grant (RFC 8628) and stores the grant. Alias of authorize.
+        logout     Revokes the refresh token (RFC 7009) and deletes the stored grant. Alias of revoke.
         profiles   Lists the profiles, the file of each, and the default profile.
-        revoke     Revokes the refresh token (RFC 7009) and deletes the stored grant. Alias: logout.
+        revoke     Revokes the refresh token (RFC 7009) and deletes the stored grant.
         status     Names the source that detects its platform here and, for a profile, the stored grant and its expiry.
         token      Prints the access token of a profile. With --audience, prints the OIDC token that the platform signs for this code.
 
@@ -95,6 +102,24 @@ describe('handshakes', () => {
         --update                            Update to latest version
         --version                           Show version
       "
+    `)
+  })
+
+  test('--version prints the version of the package', async () => {
+    const result = await run(['--version'])
+
+    expect(result.status).toMatchInlineSnapshot(`0`)
+    expect(result.stdout).toBe(`${version}\n`)
+  })
+
+  test('login --help names the command of the alias', async () => {
+    const result = await run(['login', '--help'])
+
+    expect(result.status).toMatchInlineSnapshot(`0`)
+    expect(result.stdout.split('\n').slice(0, 3).join('\n')).toMatchInlineSnapshot(`
+      "handshakes login — Runs the device grant (RFC 8628) and stores the grant. Alias of authorize.
+
+      Usage: handshakes login [profile] [options]"
     `)
   })
 
@@ -314,6 +339,262 @@ describe('handshakes', () => {
         "
       `)
     })
+
+    test('names a misspelled setting of a profile', async () => {
+      const config = Path.join(dir, 'misspelled.json')
+      Fs.writeFileSync(
+        config,
+        JSON.stringify({
+          profiles: { local: { issuer: server.url, subjectAudiance: server.url } },
+        }),
+      )
+
+      const result = await run(['profiles'], { ...env, HANDSHAKES_CONFIG: config })
+
+      expect(result.status).toMatchInlineSnapshot(`2`)
+      expect(result.stdout.replace(config, '<config>')).toMatchInlineSnapshot(`
+        "code: NO_PROFILE
+        message: "<config> is not a valid configuration file: Unrecognized key: \\"subjectAudiance\\" at \`profiles.local\`. To resolve: Fix the file so that it matches the profile schema in the README."
+        "
+      `)
+    })
+
+    test('authorize --client-secret-env sends the client secret from the variable', async () => {
+      const args = ['authorize', '--client-id', server.confidentialClientId, '--json']
+      const secret = ['--client-secret-env', 'TEST_CLIENT_SECRET']
+      // The test has its own store, so no grant of another test applies.
+      const store = { ...env, XDG_CONFIG_HOME: Path.join(dir, 'confidential') }
+
+      const unset = await run([...args, ...secret], store)
+
+      expect(unset.status).toMatchInlineSnapshot(`2`)
+      expect(unset.stdout).toMatchInlineSnapshot(`
+        "{
+          "code": "NO_CLIENT_SECRET",
+          "message": "The variable TEST_CLIENT_SECRET is not set. To resolve: Set TEST_CLIENT_SECRET to the client secret, or pass the variable that holds it to \`--client-secret-env\`."
+        }
+        "
+      `)
+
+      const missing = await run(args, store)
+
+      expect(missing.status).toMatchInlineSnapshot(`1`)
+      expect(missing.stdout).toMatchInlineSnapshot(`
+        "{
+          "code": "FAILED",
+          "message": "The server rejected the device grant: invalid_client (client registered for client_secret_post cannot use none). To resolve: 1. Check that \`clientId\` names a client that the server registers. 2. If the server requires a client secret, set \`clientSecret\` (\`--client-secret-env\` in the CLI)."
+        }
+        "
+      `)
+
+      let approval: Promise<void> | undefined
+      const authorize = await run(
+        [...args, ...secret],
+        { ...store, TEST_CLIENT_SECRET: server.confidentialClientSecret },
+        (stderr) => {
+          const code = /confirm ([A-Z0-9-]+)\./.exec(stderr)?.[1]
+          if (code && !approval) approval = server.approve(code)
+        },
+      )
+      await approval
+
+      expect(authorize.status).toMatchInlineSnapshot(`0`)
+      expect(JSON.parse(authorize.stdout)).toMatchInlineSnapshot(
+        { expiresAt: expect.any(Number) },
+        `
+        {
+          "expiresAt": Any<Number>,
+          "refreshable": true,
+          "scope": "openid email offline_access",
+        }
+      `,
+      )
+      expect(authorize.stdout + authorize.stderr).not.toContain(server.confidentialClientSecret)
+    }, 30_000)
+
+    test('token --interactive runs the device grant, and --no-interactive does not', async () => {
+      let approval: Promise<void> | undefined
+      const interactive = await run(
+        ['token', '--interactive'],
+        { ...env, XDG_CONFIG_HOME: Path.join(dir, 'interactive') },
+        (stderr) => {
+          const code = /confirm ([A-Z0-9-]+)\./.exec(stderr)?.[1]
+          if (code && !approval) approval = server.approve(code)
+        },
+      )
+      await approval
+
+      expect(interactive.status).toMatchInlineSnapshot(`0`)
+      expect(approval).toBeDefined()
+
+      const result = await run(['token', '--no-interactive'], {
+        ...env,
+        XDG_CONFIG_HOME: Path.join(dir, 'not-interactive'),
+      })
+
+      expect(result.status).toMatchInlineSnapshot(`3`)
+    }, 30_000)
+  })
+
+  describe('with a token exchange', () => {
+    let env: Record<string, string>
+    let issuer: Issuer.Issuer
+    let resources: (readonly string[])[]
+    let server: Awaited<ReturnType<typeof Http.serve>>
+
+    beforeAll(async () => {
+      issuer = await Issuer.create()
+      resources = []
+      server = await Http.serve(
+        (url) =>
+          ExchangeServer.create({
+            // The resources of each request show the `audience` that the profile sends.
+            issue: async (context) => {
+              resources.push(context.resources)
+              return { accessToken: crypto.randomUUID(), expiresAt: context.expiresAt }
+            },
+            issuer: url,
+            policies: [
+              Policy.githubActions({
+                audience: 'https://exchange.example.com',
+                issuer: issuer.url,
+                repositoryId: '812345',
+                resources: ['urn:example:default', 'urn:example:vercel'],
+                scopes: ['data:read'],
+              }),
+              Policy.vercel({
+                audience: 'https://exchange.example.com/vercel',
+                issuer: issuer.url,
+                ownerId: 'team_acme',
+                projectId: 'prj_app',
+                resources: ['urn:example:default', 'urn:example:vercel'],
+                scopes: ['data:read'],
+              }),
+            ],
+          }).fetch,
+      )
+
+      // Neither profile names an issuer, as for OpenRouter and Google STS.
+      const config = Path.join(dir, 'exchange.json')
+      Fs.writeFileSync(
+        config,
+        JSON.stringify({
+          profiles: {
+            exchange: {
+              endpoints: { token: `${server.url}/oauth2/token` },
+              parameters: { audience: 'urn:example:default' },
+              sources: {
+                vercel: {
+                  parameters: { audience: 'urn:example:vercel' },
+                  subjectAudience: 'https://exchange.example.com/vercel',
+                },
+              },
+              subjectAudience: 'https://exchange.example.com',
+            },
+            rejected: {
+              endpoints: { token: `${server.url}/oauth2/token` },
+              subjectAudience: 'https://other.example.com',
+            },
+          },
+        }),
+      )
+      env = { HANDSHAKES_CONFIG: config, XDG_CONFIG_HOME: Path.join(dir, 'exchange') }
+    })
+
+    afterAll(async () => {
+      await Promise.all([issuer.close(), server.close()])
+    })
+
+    test('token exchanges with the subjectAudience and parameters of the profile', async () => {
+      const result = await run(['token', 'exchange'], {
+        ...env,
+        ...(await issuer.env({ preset: 'githubActions' })),
+      })
+
+      expect(result.status).toMatchInlineSnapshot(`0`)
+      expect(resources.at(-1)).toMatchInlineSnapshot(`
+        [
+          "urn:example:default",
+        ]
+      `)
+    })
+
+    test('token uses the settings of sources for the detected source', async () => {
+      const result = await run(['token', 'exchange'], {
+        ...env,
+        ...(await issuer.env({
+          audience: 'https://exchange.example.com/vercel',
+          preset: 'vercel',
+        })),
+      })
+
+      expect(result.status).toMatchInlineSnapshot(`0`)
+      expect(resources.at(-1)).toMatchInlineSnapshot(`
+        [
+          "urn:example:vercel",
+        ]
+      `)
+    })
+
+    test('token exits with 4 when the server rejects the subject token', async () => {
+      const result = await run(['token', 'rejected'], {
+        ...env,
+        ...(await issuer.env({ preset: 'githubActions' })),
+      })
+
+      expect(result.status).toMatchInlineSnapshot(`4`)
+      expect(result.stdout).toMatchInlineSnapshot(`
+        "code: REJECTED
+        message: "The server rejected the token exchange: invalid_grant (The subject token matches no trust policy.). To resolve: 1. Check that a trust policy on the server matches the issuer, audience, and claims of the subject token. 2. Check that the subject token has not expired."
+        "
+      `)
+    })
+
+    test('--source limits the sources, in their priority order', async () => {
+      const githubActions = await issuer.env({ preset: 'githubActions' })
+
+      const status = await run(
+        ['status', '--json', '--source', 'vercel', '--source', 'githubActions'],
+        {
+          ...env,
+          ...githubActions,
+        },
+      )
+
+      expect(JSON.parse(status.stdout)).toMatchInlineSnapshot(`
+        {
+          "checked": [
+            "vercel",
+            "githubActions",
+          ],
+          "source": "githubActions",
+        }
+      `)
+
+      const token = await run(['token', 'exchange', '--source', 'vercel'], {
+        ...env,
+        ...githubActions,
+      })
+
+      expect(token.status).toMatchInlineSnapshot(`3`)
+      expect(token.stdout.replace(server.url, '<server>')).toMatchInlineSnapshot(`
+        "code: AUTHORIZATION_REQUIRED
+        message: "Authorization is required for <server>/oauth2/token. To resolve: 1. On a device, run \`authorize\` (\`handshakes authorize\` in the CLI) to run the device grant. 2. In CI, check that the platform is detected with \`handshakes status\`."
+        "
+      `)
+
+      const unknown = await run(['token', 'exchange', '--source', 'github'], {
+        ...env,
+        ...githubActions,
+      })
+
+      expect(unknown.status).toMatchInlineSnapshot(`2`)
+      expect(unknown.stdout).toMatchInlineSnapshot(`
+        "code: INVALID_SOURCE
+        message: "No source is named github. To resolve: Name one of these sources: vercel, githubActions, gitlab, circleci, buildkite, gcp."
+        "
+      `)
+    })
   })
 
   describe('with an API that uses Resource', () => {
@@ -332,7 +613,7 @@ describe('handshakes', () => {
         const result = await resource.verify(request)
         if (result.status === 'invalid') return resource.challenge(result)
         if (new URL(request.url).pathname !== '/v1/items')
-          return new Response(null, { status: 404 })
+          return Response.json({ error: 'not_found' }, { status: 404 })
         return Response.json({
           items: [],
           method: request.method,
@@ -406,6 +687,23 @@ describe('handshakes', () => {
       const result = await run(['fetch', `${api.url}/v1/missing`, '--fail'], env)
 
       expect(result.status).toMatchInlineSnapshot(`22`)
+      expect(result.stdout).toMatchInlineSnapshot(`"{"error":"not_found"}"`)
+    })
+
+    test('fetch --fail --json exits with 22 and returns the response', async () => {
+      const result = await run(['fetch', `${api.url}/v1/missing`, '--fail', '--json'], env)
+
+      expect(result.status).toMatchInlineSnapshot(`22`)
+      expect(JSON.parse(result.stdout)).toMatchInlineSnapshot(
+        { headers: expect.any(Object) },
+        `
+        {
+          "body": "{"error":"not_found"}",
+          "headers": Any<Object>,
+          "status": 404,
+        }
+      `,
+      )
     })
 
     test('fetch exits with 3 when no source detects its platform', async () => {
@@ -467,7 +765,6 @@ describe('handshakes', () => {
           "profile",
           "url",
           "data",
-          "fail",
           "header",
           "method",
         ]

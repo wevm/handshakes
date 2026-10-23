@@ -7,7 +7,6 @@ import { Cli, z } from 'incur'
 import * as Client from '../../Client.js'
 import * as Errors from '../../internal/Errors.js'
 import * as Metadata from '../../Metadata.js'
-import * as Source from '../../node/Source.js'
 import * as Store from '../../node/Store.js'
 import * as Context from '../Context.js'
 import * as Profile from '../Profile.js'
@@ -15,7 +14,6 @@ import * as Profile from '../Profile.js'
 /** Options of a request. An agent, through MCP, receives only these. */
 const request = z.object({
   data: z.string().optional().describe('Request body'),
-  fail: z.boolean().optional().describe('Exits 22 on HTTP 400 or more, as curl does'),
   header: z.array(z.string()).optional().describe('Request header, as `Name: value`. Repeatable'),
   method: z.string().optional().describe('Default: GET, or POST with --data'),
 })
@@ -25,13 +23,17 @@ const shell = z.object({
   ...Context.options.shape,
   ...request.shape,
   data: z.string().optional().describe('Request body, or @file to read it from a file'),
+  fail: z
+    .boolean()
+    .optional()
+    .describe('Exits 22 on HTTP 400 or more, as curl does. The output still holds the response'),
   include: z.boolean().optional().describe('Prints the status and the headers before the body'),
 })
 
 /**
- * Returns the `fetch` command. For an agent (`--mcp`), it accepts no `issuer`, `resource`,
- * `clientId`, or `scope`, and reads no file through `--data @file`, so a prompt cannot redirect a
- * token or read a local file.
+ * Returns the `fetch` command. For an agent (`--mcp`), it accepts only the options of a request,
+ * and reads no file through `--data @file`, so a prompt cannot redirect a token, read a local file,
+ * or name a variable that holds a secret. The agent reads the HTTP status from the result.
  */
 export function create(options: { agent: boolean }) {
   return Cli.command({
@@ -83,8 +85,10 @@ export function create(options: { agent: boolean }) {
           ? Context.client({ args: { profile: name }, options: c.options }).client
           : await Client.discover({
               clientId: c.options.clientId,
+              clientSecret: Context.clientSecret(c.options),
+              interactive: c.options.interactive,
               scope: c.options.scope,
-              sources: Source.defaults,
+              sources: Context.sources(c.options),
               store: Store.file(),
               url,
             })
@@ -106,7 +110,10 @@ export function create(options: { agent: boolean }) {
           method: c.options.method ?? (body === undefined ? 'GET' : 'POST'),
         })
         const text = await response.text()
-        const failed = c.options.fail === true && response.status >= 400
+
+        // As with `curl --fail-with-body`, the output still holds the response, so the error of the
+        // API stays readable.
+        if (c.options.fail === true && response.status >= 400) process.exitCode = 22
 
         if (!c.formatExplicit) {
           if (c.options.include) {
@@ -115,16 +122,8 @@ export function create(options: { agent: boolean }) {
             process.stdout.write('\n')
           }
           process.stdout.write(text)
-          if (failed) process.exitCode = 22
           return
         }
-
-        if (failed)
-          return c.error({
-            code: 'HTTP_ERROR',
-            exitCode: 22,
-            message: `The request returned HTTP ${response.status}. To resolve: Read \`body\` for the error of the API.`,
-          })
         return {
           body: text,
           headers: Object.fromEntries(response.headers),

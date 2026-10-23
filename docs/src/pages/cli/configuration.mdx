@@ -55,7 +55,7 @@ handshakes status
 
 ## Fields
 
-The CLI accepts these fields in each profile. It ignores other fields.
+The CLI accepts these fields in each profile. A field that is not on this list, such as a misspelled field, fails with `NO_PROFILE`, and the message names the field.
 
 ### clientId
 
@@ -101,6 +101,17 @@ The authorization server. The CLI reads its endpoints from its metadata (RFC 841
 { "issuer": "https://auth.example.com" }
 ```
 
+### parameters
+
+- **Type:** `Record<string, string>`
+- **Default:** `undefined`
+
+Extra fields of the token exchange, such as the `federation_policy_id` of [OpenRouter](/guides/services/openrouter). The fields of the grant itself, such as `subject_token`, always replace a field of the same name.
+
+```json
+{ "parameters": { "federation_policy_id": "<policy id>" } }
+```
+
 ### resource
 
 - **Type:** `string`
@@ -123,9 +134,42 @@ The space-separated scopes of the access token.
 { "scope": "data:read" }
 ```
 
+### sources
+
+- **Type:** `{ [source: string]: { parameters?: Record<string, string>, subjectAudience?: string } }`
+- **Default:** `undefined`
+
+The `parameters` and `subjectAudience` of one source, by the name of the source, such as `githubActions`. When that source detects its platform, each field replaces the field of the profile. This is the JSON form of [`Client.PerSource`](/api/core/client/create#clientpersource). An unknown source name fails.
+
+```json
+{
+  "sources": {
+    "githubActions": {
+      "parameters": {
+        "audience": "//iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/ci/providers/github"
+      },
+      "subjectAudience": "https://iam.googleapis.com/projects/123/locations/global/workloadIdentityPools/ci/providers/github"
+    }
+  }
+}
+```
+
+### subjectAudience
+
+- **Type:** `string`
+- **Default:** `issuer`
+
+The `aud` of the subject token that the CLI requests from the platform. A profile with `endpoints` and no `issuer` needs it for a token exchange, such as a profile for [Google Cloud STS](/guides/services/google-sts).
+
+```json
+{ "subjectAudience": "https://openrouter.ai" }
+```
+
 ## Flags
 
-The [shared options](/cli) replace the fields of the selected profile for one run: `--client-id`, `--issuer`, `--resource`, and `--scope`. The flags cannot set `endpoints` or `env`.
+The [shared options](/cli) replace the fields of the selected profile for one run: `--client-id`, `--issuer`, `--resource`, and `--scope`. The flags cannot set `endpoints`, `env`, `parameters`, `sources`, or `subjectAudience`.
+
+A profile cannot name the variable of a client secret. A project file could name any variable, and send its value to the server of the profile. Only `--client-secret-env` names it, for one run.
 
 ```sh
 # Replaces the scope of the example profile for this run
@@ -141,11 +185,11 @@ handshakes authorize --issuer https://auth.example.com --client-id example-cli
 
 ## Errors
 
-| Condition                                 | Error code   | Exit code |
-| ----------------------------------------- | ------------ | --------- |
-| The profile argument names no profile.    | `NO_PROFILE` | 2         |
-| A file does not match the profile schema. | `NO_PROFILE` | 2         |
-| A file is not valid JSON.                 | `FAILED`     | 1         |
+| Condition                                                           | Error code   | Exit code |
+| ------------------------------------------------------------------- | ------------ | --------- |
+| The profile argument names no profile.                              | `NO_PROFILE` | 2         |
+| A file does not match the profile schema, such as an unknown field. | `NO_PROFILE` | 2         |
+| A file is not valid JSON.                                           | `FAILED`     | 1         |
 
 ## Grants
 

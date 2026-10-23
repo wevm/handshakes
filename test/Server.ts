@@ -81,6 +81,21 @@ export async function create(options: create.Options = {}): Promise<create.Retur
     headers: new Headers({ cookie }),
   })
 
+  // A confidential client for the device grant, as Google registers one. Both endpoints of the
+  // grant require its secret.
+  const confidentialClient = await auth.api.adminCreateOAuthClient({
+    body: {
+      client_name: 'Handshakes confidential test',
+      grant_types: ['urn:ietf:params:oauth:grant-type:device_code', 'refresh_token'],
+      scope: 'openid email offline_access',
+      skip_consent: true,
+      token_endpoint_auth_method: 'client_secret_post',
+    },
+    headers: new Headers({ cookie }),
+  })
+  if (!confidentialClient.client_secret) throw new Error('Expected a client secret.')
+  const confidentialClientSecret = confidentialClient.client_secret
+
   // A public client for the token exchange. Its trust policies authorize it, not a secret.
   const exchangeClient = await auth.api.adminCreateOAuthClient({
     body: {
@@ -117,6 +132,8 @@ export async function create(options: create.Options = {}): Promise<create.Retur
         server.close((error) => (error ? reject(error) : resolve()))
         server.closeAllConnections()
       }),
+    confidentialClientId: confidentialClient.client_id,
+    confidentialClientSecret,
     exchangeClientId: exchangeClient.client_id,
     async trust(policy) {
       await auth.api.createTrustPolicy({ body: { ...policy, clientId: exchangeClient.client_id } })
@@ -137,6 +154,10 @@ export declare namespace create {
     clientId: string
     /** Stops the server. */
     close: () => Promise<void>
+    /** ID of a confidential client with the device grant and refresh tokens. */
+    confidentialClientId: string
+    /** Secret of the confidential client, which it sends as `client_secret`. */
+    confidentialClientSecret: string
     /** ID of a public client with only the token exchange grant. */
     exchangeClientId: string
     /** Stores `policy` in the `trustPolicy` table, for the exchange client. */

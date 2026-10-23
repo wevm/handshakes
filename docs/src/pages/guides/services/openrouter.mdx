@@ -99,7 +99,27 @@ const client = Client.create({
 
 ### The CLI
 
-A CLI profile holds no `parameters` or `subjectAudience`. So `handshakes exec` and `handshakes token` cannot run this exchange. Request the token through `Client.create` in code.
+A [CLI profile](/cli/configuration) holds the same settings. `handshakes exec` then sets `OPENROUTER_API_KEY` for a command that reads it, with no change to its code.
+
+```json [handshakes.json]
+{
+  "profiles": {
+    "openrouter": {
+      "endpoints": { "token": "https://openrouter.ai/api/v1/oauth/token" },
+      "env": "OPENROUTER_API_KEY",
+      "parameters": { "federation_policy_id": "<policy id>" },
+      "subjectAudience": "https://openrouter.ai"
+    }
+  }
+}
+```
+
+```sh
+# Runs the script with an exchanged token in OPENROUTER_API_KEY
+handshakes exec openrouter -- node summarize.ts
+```
+
+If each platform has its own federation policy, `sources` holds the `parameters` of each source, such as `{ "vercel": { "parameters": { "federation_policy_id": "<vercel policy id>" } } }`.
 
 ## More
 
