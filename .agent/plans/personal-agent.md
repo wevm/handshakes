@@ -50,13 +50,14 @@ sequenceDiagram
   P->>G: 10. Post the review, or push the patch, as the person
 ```
 
-| Component       | Path                                          | Responsibility                                                                                                                                       |
-| --------------- | --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Caller workflow | `examples/personal-agent/workflows/agent.yml` | Copied into each repository as `.github/workflows/agent.yml`. Starts on `/agent`, and calls the two reusable workflows.                              |
-| Run workflow    | `examples/personal-agent/workflows/run.yml`   | Reusable. Runs the agent with the model token only, and uploads its output as an artifact.                                                           |
-| Post workflow   | `examples/personal-agent/workflows/post.yml`  | Reusable. Downloads the artifact, and posts it with the GitHub token of the person. Runs no code from the checkout.                                  |
-| Token server    | `examples/personal-agent/server/`             | Better Auth with GitHub sign-in, and Handshakes `Server`. Links a GitHub account, stores the settings of the person, and issues the two credentials. |
-| Instructions    | A repository of the person, `<login>/.agent`  | `AGENT.md`, the standing instructions of the person, such as review style                                                                            |
+| Component       | Path                                                  | Responsibility                                                                                                                                                            |
+| --------------- | ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Caller workflow | `examples/personal-agent/workflows/agent.yml`         | Copied into each repository as `.github/workflows/agent.yml`. Starts on `/agent`, and calls the two reusable workflows.                                                   |
+| Run workflow    | `examples/personal-agent/workflows/run.yml`           | Reusable. Runs the agent with the model token only, and uploads its output as an artifact.                                                                                |
+| Post workflow   | `examples/personal-agent/workflows/post.yml`          | Reusable. Downloads the artifact, and posts it with the GitHub token of the person. Runs no code from the checkout.                                                       |
+| Workflow host   | A repository of the deployment, such as `<org>/agent` | GitHub calls reusable workflows only from `.github/workflows/` of a repository. The host holds `run.yml` and `post.yml`, so every caller has the same `job_workflow_ref`. |
+| Token server    | `examples/personal-agent/server/`                     | Better Auth with GitHub sign-in, and Handshakes `Server`. Links a GitHub account, stores the settings of the person, and issues the two credentials.                      |
+| Instructions    | A repository of the person, `<login>/.agent`          | `AGENT.md`, the standing instructions of the person, such as review style                                                                                                 |
 
 ## Flow
 
