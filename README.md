@@ -11,30 +11,26 @@
 ## Overview
 
 ```ts
-import Anthropic from '@anthropic-ai/sdk'
-import { oidcFederationProvider } from '@anthropic-ai/sdk/lib/credentials/oidc-federation'
-import { Identity } from 'handshakes'
+import { createOpenRouter } from '@openrouter/ai-sdk-provider'
+import { generateText } from 'ai'
+import { Client } from 'handshakes'
 
-// Requests a new OIDC token from the platform, such as GitHub Actions, for each exchange.
-const identityTokenProvider = async () =>
-  (await Identity.token({ audience: 'https://api.anthropic.com' })).value
-
-// Exchanges the token for a short-lived Claude API token, in place of `ANTHROPIC_API_KEY`.
-const client = new Anthropic({
-  credentials: oidcFederationProvider({
-    baseURL: 'https://api.anthropic.com',
-    federationRuleId: 'fdrl_...',
-    fetch,
-    identityTokenProvider,
-    organizationId: '00000000-0000-0000-0000-000000000000',
-    serviceAccountId: 'svac_...',
-  }),
+// Exchanges the OIDC token of the platform, such as GitHub Actions, at OpenRouter (RFC 8693).
+const client = Client.create({
+  endpoints: { token: 'https://openrouter.ai/api/v1/oauth/token' },
+  // Names the federation policy, which maps the subject token to an OpenRouter API key.
+  parameters: { federation_policy_id: '<policy id>' },
+  // `aud` of the subject token. Equals the audience of the policy.
+  subjectAudience: 'https://openrouter.ai',
 })
 
-const message = await client.messages.create({
-  max_tokens: 1024,
-  messages: [{ content: 'Summarize the release notes.', role: 'user' }],
-  model: 'claude-opus-5-5',
+// Expires in 15 minutes or less, and never after the subject token. Replaces `OPENROUTER_API_KEY`.
+const token = await client.token()
+const openrouter = createOpenRouter({ apiKey: token.value })
+
+const { text } = await generateText({
+  model: openrouter('anthropic/claude-sonnet-4.5'),
+  prompt: 'Summarize the release notes.',
 })
 ```
 
@@ -59,7 +55,7 @@ Read github.com/wevm/handshakes and replace the stored API keys of my project wi
 
 - **Token Exchange:** Exchanges the OIDC token of GitHub Actions, Vercel, GitLab, CircleCI, Google Cloud, or Buildkite for an access token ([RFC 8693](https://www.rfc-editor.org/rfc/rfc8693)).
 - **Device Authorization:** Runs the device authorization grant on a laptop ([RFC 8628](https://www.rfc-editor.org/rfc/rfc8628)), then stores and refreshes the grant.
-- **Subject Tokens:** Returns the platform token itself, for APIs that accept it directly, such as Vercel AI Gateway, and for SDKs that exchange it, such as the Anthropic SDK.
+- **Subject Tokens:** Returns the platform token itself, for APIs that accept it directly, such as Vercel AI Gateway.
 - **Discovery:** Finds the authorization server of an API from its metadata ([RFC 9728](https://www.rfc-editor.org/rfc/rfc9728), [RFC 8414](https://www.rfc-editor.org/rfc/rfc8414)).
 - **Grant Stores:** Keeps grants in memory, in a file with a lock across processes, or in the system keychain.
 - **Token Endpoint:** Serves the RFC 8693 token endpoint as a fetch handler. The host issues the credential.
