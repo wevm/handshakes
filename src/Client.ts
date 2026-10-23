@@ -96,6 +96,16 @@ export function create(options: create.Options): Client {
     return metadata
   }
 
+  /** Returns whether `token` runs the device grant. Default: stdin is a TTY and `CI` is not set. */
+  function interactive(): boolean {
+    return (
+      options.interactive ??
+      (env['CI'] === undefined &&
+        (globalThis as { process?: { stdin?: { isTTY?: boolean } } }).process?.stdin?.isTTY ===
+          true)
+    )
+  }
+
   /** Caches the access token of `grant`, and returns it. */
   function use(grant: Grant.Grant): AccessToken {
     cached = {
@@ -233,12 +243,7 @@ export function create(options: create.Options): Client {
       const grant = await stored()
       if (grant) return use(grant)
 
-      const interactive =
-        options.interactive ??
-        (env['CI'] === undefined &&
-          (globalThis as { process?: { stdin?: { isTTY?: boolean } } }).process?.stdin?.isTTY ===
-            true)
-      if (interactive) return use(await authorize())
+      if (interactive()) return use(await authorize())
 
       throw new AuthorizationRequiredError({ issuer })
     })().finally(() => {
@@ -308,9 +313,12 @@ export function create(options: create.Options): Client {
         }
 
       const grant = await store.get(key)
-      const interactive = options.interactive ?? false
       if (!grant)
-        return { checked: sources.map((entry) => entry.name), interactive, method: 'none' }
+        return {
+          checked: sources.map((entry) => entry.name),
+          interactive: interactive(),
+          method: 'none',
+        }
 
       const subject = Jwt.decode(grant.accessToken)?.payload['sub']
       return {
