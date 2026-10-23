@@ -956,6 +956,15 @@ Done when `handshakes fetch` works without a profile against an API that uses `R
 
 ## Test targets
 
+The Platforms workflow (`.github/workflows/platforms.yml`, weekly and on demand) runs `test/Platforms.test.ts` with the GitHub Actions token of this repository and no secret. Each suite runs when its repository variables are set:
+
+| Suite      | Variables                                                | Setup on the server                                                                                                                                                                                                             |
+| ---------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Google STS | `GCP_WORKLOAD_PROVIDER`, `GCP_BUCKET`                    | A workload identity pool with a GitHub provider (issuer `https://token.actions.githubusercontent.com`, condition on `assertion.repository_id`), and `roles/storage.objectViewer` on the bucket for the provider's principal set |
+| OpenRouter | `OPENROUTER_FEDERATION_POLICY_ID`, `OPENROUTER_AUDIENCE` | A Business plan, and a federation policy with the GitHub issuer, the audience, and a condition on `sub`                                                                                                                         |
+
+Vercel AI Gateway accepts Vercel tokens only, so it needs a Vercel deployment and stays a manual check.
+
 | Target            | Path                                    | Setup                                                                                                                    |
 | ----------------- | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
 | Vercel AI Gateway | Subject token, no exchange              | `vercel link` and `vercel env pull`, for a token valid 12 hours                                                          |

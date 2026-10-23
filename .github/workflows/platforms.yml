@@ -1,0 +1,28 @@
+name: Platforms
+on:
+  schedule:
+    - cron: '17 6 * * 1'
+  workflow_dispatch:
+
+jobs:
+  platforms:
+    name: Exchange at real servers
+    # The job holds no secret. It proves its identity with the GitHub Actions OIDC token alone.
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        uses: ./.github/actions/install-dependencies
+
+      - name: Run platform tests
+        run: pnpm exec vp test run test/Platforms.test.ts
+        env:
+          GCP_BUCKET: ${{ vars.GCP_BUCKET }}
+          GCP_WORKLOAD_PROVIDER: ${{ vars.GCP_WORKLOAD_PROVIDER }}
+          OPENROUTER_AUDIENCE: ${{ vars.OPENROUTER_AUDIENCE }}
+          OPENROUTER_FEDERATION_POLICY_ID: ${{ vars.OPENROUTER_FEDERATION_POLICY_ID }}
