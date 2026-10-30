@@ -154,6 +154,7 @@ describe('handshakes', () => {
             "githubActions",
             "gitlab",
             "circleci",
+            "azure",
             "buildkite",
             "gcp",
           ],
@@ -169,7 +170,7 @@ describe('handshakes', () => {
     expect(result.status).toMatchInlineSnapshot(`3`)
     expect(result.stdout + result.stderr).toMatchInlineSnapshot(`
       "code: SOURCE_NOT_FOUND
-      message: "No source detected its platform for audience https://api.example.com. Checked: vercel, githubActions, gitlab, circleci, buildkite, gcp. To resolve: 1. Run the code on a platform that issues OIDC tokens, such as GitHub Actions or Vercel. 2. On another platform, pass a custom source in \`sources\`, built with \`Source.from\`."
+      message: "No source detected its platform for audience https://api.example.com. Checked: vercel, githubActions, gitlab, circleci, azure, buildkite, gcp. To resolve: 1. Run the code on a platform that issues OIDC tokens, such as GitHub Actions or Vercel. 2. On another platform, pass a custom source in \`sources\`, built with \`Source.from\`."
       "
     `)
   })
@@ -257,6 +258,7 @@ describe('handshakes', () => {
             "githubActions",
             "gitlab",
             "circleci",
+            "azure",
             "buildkite",
             "gcp",
           ],
@@ -591,7 +593,7 @@ describe('handshakes', () => {
       expect(unknown.status).toMatchInlineSnapshot(`2`)
       expect(unknown.stdout).toMatchInlineSnapshot(`
         "code: INVALID_SOURCE
-        message: "No source is named github. To resolve: Name one of these sources: vercel, githubActions, gitlab, circleci, buildkite, gcp."
+        message: "No source is named github. To resolve: Name one of these sources: vercel, githubActions, gitlab, circleci, azure, buildkite, gcp."
         "
       `)
     })

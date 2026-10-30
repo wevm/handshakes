@@ -15,6 +15,41 @@ afterAll(async () => {
   await issuer.close()
 })
 
+describe('azure', () => {
+  test('requests a token from the managed identity endpoint of App Service', async () => {
+    const env = await issuer.env({ preset: 'azure' })
+
+    const token = await Identity.token({ audience, env, sources: [Source.azure()] })
+
+    expect(token.source).toMatchInlineSnapshot(`"azure"`)
+    expect(token.claims['oid']).toMatchInlineSnapshot(`"9a8b7c6d-0000-4000-8000-000000000000"`)
+  })
+
+  test('requests a token from the metadata service on a virtual machine', async () => {
+    const token = await Identity.token({
+      audience,
+      env: {},
+      sources: [Source.azure({ detect: 'always', metadataHost: new URL(issuer.url).host })],
+    })
+
+    expect(token.source).toMatchInlineSnapshot(`"azure"`)
+    expect(token.claims['tid']).toMatchInlineSnapshot(`"72f988bf-0000-4000-8000-000000000000"`)
+  })
+
+  test('throws when the endpoint rejects the identity header', async () => {
+    const env = { ...(await issuer.env({ preset: 'azure' })), IDENTITY_HEADER: 'wrong' }
+
+    const error = await Identity.token({ audience, env, sources: [Source.azure()] }).then(
+      () => undefined,
+      (error: Source.RequestError) => error,
+    )
+    if (!error) throw new Error('Expected a refusal.')
+
+    expect(error.source).toMatchInlineSnapshot(`"azure"`)
+    expect(error.details.endsWith('returned HTTP 401.')).toMatchInlineSnapshot(`true`)
+  })
+})
+
 describe('circleci', () => {
   const organization = 'b6a6b6f0-0000-4000-8000-000000000000'
 
@@ -80,7 +115,7 @@ describe('gcp', () => {
     const env = { ...(await issuer.env({ preset: 'gcp' })), K_SERVICE: undefined }
 
     await expect(Identity.token({ audience, env })).rejects.toThrowErrorMatchingInlineSnapshot(`
-      [Identity.NotFoundError: No source detected its platform for audience https://api.example.com. Checked: vercel, githubActions, gitlab, circleci, gcp.
+      [Identity.NotFoundError: No source detected its platform for audience https://api.example.com. Checked: vercel, githubActions, gitlab, circleci, azure, gcp.
 
       To resolve:
       1. Run the code on a platform that issues OIDC tokens, such as GitHub Actions or Vercel.

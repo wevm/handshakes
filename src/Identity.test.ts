@@ -29,7 +29,7 @@ describe('token', () => {
       Identity.token({ audience: 'https://api.example.com', env: {} }),
     ).rejects.toThrowErrorMatchingInlineSnapshot(
       `
-      [Identity.NotFoundError: No source detected its platform for audience https://api.example.com. Checked: vercel, githubActions, gitlab, circleci, gcp.
+      [Identity.NotFoundError: No source detected its platform for audience https://api.example.com. Checked: vercel, githubActions, gitlab, circleci, azure, gcp.
 
       To resolve:
       1. Run the code on a platform that issues OIDC tokens, such as GitHub Actions or Vercel.

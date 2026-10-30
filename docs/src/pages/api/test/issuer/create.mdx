@@ -97,31 +97,37 @@ afterAll(() => issuer.close())
 
 | Preset          | Environment from `env`                                                                      |
 | --------------- | ------------------------------------------------------------------------------------------- |
+| `azure`         | `IDENTITY_ENDPOINT` with the App Service endpoint of the issuer, and `IDENTITY_HEADER`      |
 | `circleci`      | `CIRCLECI=true`, and `CIRCLE_OIDC_TOKEN_V2` with a signed token                             |
 | `gcp`           | `K_SERVICE=app`, and `GCE_METADATA_HOST` with the host of the issuer                        |
 | `githubActions` | `GITHUB_ACTIONS=true`, `ACTIONS_ID_TOKEN_REQUEST_URL`, and `ACTIONS_ID_TOKEN_REQUEST_TOKEN` |
 | `gitlab`        | `GITLAB_CI=true`, and the `<AUD>_ID_TOKEN` variable of the audience with a signed token     |
+| `kubernetes`    | None. `env` throws a `TypeError`. Write the token of `sign` to a file for `Source.file`     |
 | `vercel`        | `VERCEL=1`, and `VERCEL_OIDC_TOKEN` with a signed token                                     |
 
 Each preset signs tokens with fixed sample claims:
 
 | Preset          | Claims                                                                                                                                                                                                                                             |
 | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `azure`         | `appid`, `idtyp: app`, `oid: 9a8b7c6d-0000-4000-8000-000000000000`, `sub`, `tid: 72f988bf-0000-4000-8000-000000000000`                                                                                                                             |
 | `circleci`      | `oidc.circleci.com/project-id`, `oidc.circleci.com/vcs-origin: github.com/acme/app`, `oidc.circleci.com/vcs-ref: refs/heads/main`, `sub`                                                                                                           |
 | `gcp`           | `azp`, `email: ci@acme.iam.gserviceaccount.com`, `email_verified: true`, `sub`                                                                                                                                                                     |
 | `githubActions` | `event_name: push`, `ref: refs/heads/main`, `repository: acme/app`, `repository_id: 812345`, `repository_owner: acme`, `repository_owner_id: 67890`, `runner_environment: github-hosted`, `sub: repo:acme/app:ref:refs/heads/main`, `workflow: CI` |
 | `gitlab`        | `namespace_id: 67890`, `namespace_path: acme`, `project_id: 812345`, `project_path: acme/app`, `ref: main`, `ref_type: branch`, `sub`                                                                                                              |
+| `kubernetes`    | `kubernetes.io` with the namespace and the service account, `sub: system:serviceaccount:default:app`                                                                                                                                               |
 | `vercel`        | `environment: production`, `owner: acme`, `owner_id: team_acme`, `project: app`, `project_id: prj_app`, `sub`                                                                                                                                      |
 
 ## Endpoints
 
-| Path                                                             | Serves                                                                                |
-| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| `GET /.well-known/openid-configuration`                          | The discovery document, with `issuer` and `jwks_uri`                                  |
-| `GET /.well-known/jwks`                                          | The public key                                                                        |
-| `/github/token`                                                  | The GitHub token request. Needs the request token as `Bearer`. Returns `value`.       |
-| `/computeMetadata/v1/instance/service-accounts/default/identity` | The Google Cloud metadata server. Needs `Metadata-Flavor: Google`. Returns the token. |
-| `POST /vercel/token`                                             | The Vercel audience exchange. Needs a token of this issuer. Returns `token`.          |
+| Path                                                             | Serves                                                                                        |
+| ---------------------------------------------------------------- | --------------------------------------------------------------------------------------------- |
+| `GET /.well-known/openid-configuration`                          | The discovery document, with `issuer` and `jwks_uri`                                          |
+| `GET /.well-known/jwks`                                          | The public key                                                                                |
+| `/azure/identity`                                                | The App Service managed identity endpoint. Needs `X-IDENTITY-HEADER`. Returns `access_token`. |
+| `/metadata/identity/oauth2/token`                                | The Azure instance metadata service. Needs `Metadata: true`. Returns `access_token`.          |
+| `/github/token`                                                  | The GitHub token request. Needs the request token as `Bearer`. Returns `value`.               |
+| `/computeMetadata/v1/instance/service-accounts/default/identity` | The Google Cloud metadata server. Needs `Metadata-Flavor: Google`. Returns the token.         |
+| `POST /vercel/token`                                             | The Vercel audience exchange. Needs a token of this issuer. Returns `token`.                  |
 
 Each endpoint signs the token for the `audience` of the request, with the claims of its preset. Other paths return `404`.
 

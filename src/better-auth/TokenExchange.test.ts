@@ -22,6 +22,15 @@ describe('tokenExchange', () => {
         scopes: ['data:read'],
       }),
     )
+    await server.trust(
+      Policy.githubActions({
+        audience: server.url,
+        issuer: issuer.url,
+        maxAge: 600,
+        repositoryId: '812346',
+        scopes: ['data:read'],
+      }),
+    )
   })
 
   afterAll(async () => {
@@ -99,6 +108,24 @@ describe('tokenExchange', () => {
         "status": 400,
       }
     `)
+  })
+
+  test('applies the maxAge of a stored policy', async () => {
+    const claims = { repository_id: '812346' }
+
+    const fresh = await exchange({
+      subject_token: await issuer.sign({ audience: server.url, claims, preset: 'githubActions' }),
+    })
+    const old = await exchange({
+      subject_token: await issuer.sign({
+        audience: server.url,
+        claims: { ...claims, iat: Math.floor(Date.now() / 1000) - 900 },
+        preset: 'githubActions',
+      }),
+    })
+
+    expect(fresh.status).toMatchInlineSnapshot(`200`)
+    expect(old.body['error']).toMatchInlineSnapshot(`"invalid_grant"`)
   })
 
   test('refuses a token of an issuer that no policy names', async () => {

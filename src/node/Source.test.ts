@@ -32,6 +32,7 @@ describe('defaults', () => {
         "githubActions",
         "gitlab",
         "circleci",
+        "azure",
         "buildkite",
         "gcp",
       ]

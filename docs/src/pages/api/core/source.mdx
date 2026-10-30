@@ -24,6 +24,7 @@ The factories below follow the order of `Source.defaults`, which is the order of
 | `Source.githubActions()` | `GITHUB_ACTIONS=true`                                             | `GET` of `ACTIONS_ID_TOKEN_REQUEST_URL` with `audience`                                     | Any                        |
 | `Source.gitlab()`        | `GITLAB_CI=true`                                                  | Reads the variable that `id_tokens` declares                                                | Fixed in `.gitlab-ci.yml`  |
 | `Source.circleci()`      | `CIRCLECI=true`                                                   | Reads `CIRCLE_OIDC_TOKEN_V2`                                                                | Fixed: the organization ID |
+| `Source.azure()`         | `IDENTITY_ENDPOINT` and `IDENTITY_HEADER`, which App Service sets | `GET` of `IDENTITY_ENDPOINT`, else of the instance metadata service, with `resource`        | Any                        |
 | `Source.gcp()`           | `K_SERVICE`, which Cloud Run and Cloud Functions set              | `GET` of the metadata server with `audience`                                                | Any                        |
 
 `Identity.token` decodes every token, and compares its `aud` with the requested audience. A mismatch throws `Identity.AudienceError`, and the token is not returned. This check protects a source with a fixed audience most, since its platform sets the audience.
@@ -103,6 +104,57 @@ CircleCI. It reads `CIRCLE_OIDC_TOKEN_V2`, whose `aud` is the ID of the CircleCI
 Identity.token({ audience: '<organization id>', sources: [Source.circleci()] })
 ```
 
+### Source.azure
+
+- **Type:** `(options?: Source.azure.Options) => Source.Source`
+
+Azure managed identity. On App Service, Functions, and Container Apps, it sends a `GET` of `IDENTITY_ENDPOINT` with `resource`, `api-version=2019-08-01`, and the header `X-IDENTITY-HEADER`. Elsewhere, it sends a `GET` of `/metadata/identity/oauth2/token` of the instance metadata service (IMDS), with `resource`, `api-version=2018-02-01`, and the header `Metadata: true`.
+
+The requested audience is the `resource`. A v2.0 token carries the application (client) ID of the resource as its `aud`, so request that ID, not the application ID URI.
+
+The source detects App Service, Functions, and Container Apps through `IDENTITY_ENDPOINT` and `IDENTITY_HEADER`. A virtual machine sets no such variable, so set `detect` to `'always'` there.
+
+```ts
+// Requests a token for the application ID of the authorization server
+Identity.token({ audience: 'f0e1d2c3-0000-4000-8000-000000000000', sources: [Source.azure()] })
+```
+
+#### options.clientId
+
+- **Type:** `string`
+- **Default:** the system-assigned identity
+
+The client ID of a user-assigned managed identity. The source sends it as `client_id`.
+
+```ts
+// Requests a token for one of several user-assigned identities
+Source.azure({ clientId: '0c1d2e3f-0000-4000-8000-000000000000' })
+```
+
+#### options.detect
+
+- **Type:** `'always' | 'env'`
+- **Default:** `'env'`
+
+How the source detects Azure. `'env'` detects `IDENTITY_ENDPOINT` and `IDENTITY_HEADER`. `'always'` detects on every platform, for a virtual machine. A detected source that fails throws, so list an `'always'` source last. `Source.defaults` uses `'env'`.
+
+```ts
+// A virtual machine sets no variable to detect, so this source always detects
+Source.azure({ detect: 'always' })
+```
+
+#### options.metadataHost
+
+- **Type:** `string`
+- **Default:** `'169.254.169.254'`
+
+The host of the instance metadata service.
+
+```ts
+// Requests tokens from a metadata service on another host, such as a test issuer
+Source.azure({ detect: 'always', metadataHost: '127.0.0.1:8787' })
+```
+
 ### Source.gcp
 
 - **Type:** `(options?: Source.gcp.Options) => Source.Source`
@@ -145,7 +197,7 @@ Source.gcp({ metadataHost: '169.254.169.254' })
 
 - **Type:** `readonly Source.Source[]`
 
-The default sources, in priority order: `vercel`, `githubActions`, `gitlab`, `circleci`, then `gcp`. The order is observable, since the first detected source wins. `Source.defaults` of `handshakes/node` adds `buildkite` before `gcp`.
+The default sources, in priority order: `vercel`, `githubActions`, `gitlab`, `circleci`, `azure`, then `gcp`. The order is observable, since the first detected source wins. `Source.defaults` of `handshakes/node` adds `buildkite` before `gcp`.
 
 ```ts
 import { Identity, Source } from 'handshakes'
@@ -199,6 +251,7 @@ type Source = {
 }
 ```
 
+- **`Source.azure.Options`:** The options of `Source.azure`.
 - **`Source.Context`:** The inputs of `token`: `audience`, the `aud` that the token must carry, `env`, and `fetch`, which sends the requests of the source.
 - **`Source.Env`:** Environment variables, such as `process.env`, as `Readonly<Record<string, string | undefined>>`.
 - **`Source.gcp.Options`:** The options of `Source.gcp`.

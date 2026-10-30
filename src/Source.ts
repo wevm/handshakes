@@ -52,6 +52,70 @@ export type Source = {
 }
 
 /**
+ * Azure managed identity. On App Service, Functions, and Container Apps, requests a token from
+ * `IDENTITY_ENDPOINT`. Elsewhere, such as a virtual machine, requests one from the instance
+ * metadata service (IMDS). The audience is the `resource` of the request.
+ */
+export function azure(options: azure.Options = {}): Source {
+  const name = 'azure'
+
+  return {
+    detect: (env) =>
+      options.detect === 'always' ||
+      (env['IDENTITY_ENDPOINT'] !== undefined && env['IDENTITY_HEADER'] !== undefined),
+    name,
+    async token(context) {
+      const endpoint = context.env['IDENTITY_ENDPOINT']
+      const header = context.env['IDENTITY_HEADER']
+
+      const target = (() => {
+        if (endpoint && header)
+          return {
+            headers: { 'x-identity-header': header },
+            url: new URL(endpoint),
+            version: '2019-08-01',
+          }
+        return {
+          headers: { metadata: 'true' },
+          url: new URL(
+            `http://${options.metadataHost ?? '169.254.169.254'}/metadata/identity/oauth2/token`,
+          ),
+          version: '2018-02-01',
+        }
+      })()
+      target.url.searchParams.set('api-version', target.version)
+      target.url.searchParams.set('resource', context.audience)
+      if (options.clientId) target.url.searchParams.set('client_id', options.clientId)
+
+      const response = await request(context, name, target.url, { headers: target.headers })
+      const body = (await response.json()) as { access_token?: unknown }
+      if (typeof body.access_token !== 'string')
+        throw new RequestError({
+          message: 'The token response has no `access_token`.',
+          source: name,
+          steps: ['Check that a managed identity is assigned to the resource, then run it again.'],
+        })
+      return body.access_token
+    },
+  }
+}
+
+export declare namespace azure {
+  type Options = {
+    /** Client ID of a user-assigned managed identity. Default: the system-assigned identity. */
+    clientId?: string | undefined
+    /**
+     * How the source detects Azure. `env` detects `IDENTITY_ENDPOINT` and `IDENTITY_HEADER`. `always`
+     * detects on every platform, for virtual machines, which set no variable. A detected source that
+     * fails throws, so list an `always` source last. `Source.defaults` uses `env`. Default: `env`.
+     */
+    detect?: 'always' | 'env' | undefined
+    /** Host of the instance metadata service. Default: `169.254.169.254`. */
+    metadataHost?: string | undefined
+  }
+}
+
+/**
  * CircleCI. Reads `CIRCLE_OIDC_TOKEN_V2`, whose `aud` is the ID of the CircleCI organization. Another
  * audience needs `circleci run oidc get` in the job, and a token passed through `Source.file`.
  */
@@ -246,7 +310,14 @@ export declare namespace vercel {
 }
 
 /** The default sources, in priority order. The order is observable: the first detected source wins. */
-export const defaults: readonly Source[] = [vercel(), githubActions(), gitlab(), circleci(), gcp()]
+export const defaults: readonly Source[] = [
+  vercel(),
+  githubActions(),
+  gitlab(),
+  circleci(),
+  azure(),
+  gcp(),
+]
 
 /** Returns the GitLab variable name for an audience: uppercase, with `_` for other characters. */
 function gitlabVariable(audience: string): string {

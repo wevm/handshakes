@@ -30,6 +30,7 @@ console.log(source?.name)
 | `Source.githubActions()` | `GITHUB_ACTIONS=true`                                          | Any                                        |
 | `Source.gitlab()`        | `GITLAB_CI=true`                                               | Fixed in `id_tokens` of `.gitlab-ci.yml`   |
 | `Source.circleci()`      | `CIRCLECI=true`                                                | Fixed: the ID of the CircleCI organization |
+| `Source.azure()`         | `IDENTITY_ENDPOINT` and `IDENTITY_HEADER`, set on App Service  | Any, as the `resource` of the request      |
 | `Source.gcp()`           | `K_SERVICE`, set on Cloud Run and Cloud Functions              | Any                                        |
 
 ### Request the Token

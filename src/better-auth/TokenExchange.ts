@@ -188,6 +188,7 @@ export function tokenExchange(options: tokenExchange.Options = {}) {
           claims: { required: true, type: 'json' },
           clientId: { required: true, type: 'string' },
           issuer: { index: true, required: true, type: 'string' },
+          maxAge: { required: false, type: 'number' },
           maxLifetime: { required: false, type: 'number' },
           resources: { required: false, type: 'string[]' },
           scopes: { required: true, type: 'string[]' },
@@ -230,6 +231,7 @@ type Row = {
   clientId: string
   id: string
   issuer: string
+  maxAge?: number | null | undefined
   maxLifetime?: number | null | undefined
   resources?: string[] | null | undefined
   scopes: string[]
@@ -242,6 +244,7 @@ function fromRow(row: Row): Policy.Policy {
     clientId: row.clientId,
     id: row.id,
     issuer: row.issuer,
+    ...(typeof row.maxAge === 'number' ? { maxAge: row.maxAge } : {}),
     ...(typeof row.maxLifetime === 'number' ? { maxLifetime: row.maxLifetime } : {}),
     ...(row.resources ? { resources: row.resources } : {}),
     scopes: row.scopes,
@@ -254,6 +257,7 @@ function toRow(policy: Stored): Omit<Row, 'id'> {
     claims: policy.claims,
     clientId: policy.clientId,
     issuer: policy.issuer,
+    maxAge: policy.maxAge ?? null,
     maxLifetime: policy.maxLifetime ?? null,
     resources: policy.resources ? [...policy.resources] : null,
     scopes: [...policy.scopes],
@@ -292,6 +296,10 @@ const policySchema: StandardSchemaV1<Stored> = {
       const resources = policy['resources']
       if (resources !== undefined && !strings(resources))
         return issues('resources must be an array of strings.')
+
+      const maxAge = policy['maxAge']
+      if (maxAge !== undefined && (typeof maxAge !== 'number' || maxAge <= 0))
+        return issues('maxAge must be a positive number of seconds.')
 
       const maxLifetime = policy['maxLifetime']
       if (maxLifetime !== undefined && (typeof maxLifetime !== 'number' || maxLifetime <= 0))

@@ -38,8 +38,10 @@ A preset copies the claims of one platform, with fixed sample values. `env` retu
 | `gitlab`        | `project_id: '812345'`, `ref: 'main'`                       | `GITLAB_CI`, and the `id_tokens` variable of the audience                          |
 | `circleci`      | `oidc.circleci.com/project-id`, `oidc.circleci.com/vcs-ref` | `CIRCLECI`, `CIRCLE_OIDC_TOKEN_V2`                                                 |
 | `gcp`           | `email: 'ci@acme.iam.gserviceaccount.com'`                  | `K_SERVICE`, `GCE_METADATA_HOST`                                                   |
+| `azure`         | `tid`, `oid`                                                | `IDENTITY_ENDPOINT`, `IDENTITY_HEADER`                                             |
+| `kubernetes`    | `sub: 'system:serviceaccount:default:app'`                  | None. The token of `sign` goes into a file for `Source.file`                       |
 
-For `circleci`, `gitlab`, and `vercel`, the environment holds the token itself. `audience` of `env` sets its `aud`. For `githubActions` and `gcp`, the source requests each token from the issuer, for any audience.
+For `circleci`, `gitlab`, and `vercel`, the environment holds the token itself. `audience` of `env` sets its `aud`. For `azure`, `githubActions`, and `gcp`, the source requests each token from the issuer, for any audience.
 
 ### Test a Source
 

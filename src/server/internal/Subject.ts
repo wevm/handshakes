@@ -96,9 +96,12 @@ export async function verify(options: {
   if (typeof nbf === 'number' && nbf > now + leeway) return refused
 
   const audiences = Jwt.audiences(decoded.payload)
+  const iat = decoded.payload['iat']
   const policy = candidates.find(
     (entry) =>
       audiences.includes(entry.audience) &&
+      (entry.maxAge === undefined ||
+        (typeof iat === 'number' && iat >= now - entry.maxAge - leeway)) &&
       Object.entries(entry.claims).every((claim) => {
         const value = decoded.payload[claim[0]]
         const actual = typeof value === 'number' ? String(value) : value

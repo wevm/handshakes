@@ -9,7 +9,10 @@ import * as Http from 'node:http'
 export type Issuer = {
   /** Stops the server. */
   close: () => Promise<void>
-  /** Returns the environment variables that make the source of `preset` request tokens from this issuer. */
+  /**
+   * Returns the environment variables that make the source of `preset` request tokens from this
+   * issuer. Throws a `TypeError` for `kubernetes`, whose token is a file.
+   */
   env: (options: env.Options) => Promise<Readonly<Record<string, string>>>
   /** Returns a signed token with the claims of `preset`. */
   sign: (options: sign.Options) => Promise<string>
@@ -18,7 +21,14 @@ export type Issuer = {
 }
 
 /** Platforms whose claims and endpoints the issuer copies. */
-export type Preset = 'circleci' | 'gcp' | 'githubActions' | 'gitlab' | 'vercel'
+export type Preset =
+  | 'azure'
+  | 'circleci'
+  | 'gcp'
+  | 'githubActions'
+  | 'gitlab'
+  | 'kubernetes'
+  | 'vercel'
 
 export declare namespace env {
   type Options = {
@@ -123,6 +133,26 @@ export async function create(): Promise<Issuer> {
         return json(response, 200, { value: await sign({ audience, preset: 'githubActions' }) })
       }
 
+      // The managed identity endpoint of App Service, which `IDENTITY_ENDPOINT` names.
+      if (target.pathname === '/azure/identity') {
+        if (request.headers['x-identity-header'] !== requestToken)
+          return json(response, 401, { error: 'invalid_request' })
+        const resource = target.searchParams.get('resource') ?? ''
+        return json(response, 200, {
+          access_token: await sign({ audience: resource, preset: 'azure' }),
+        })
+      }
+
+      // The managed identity endpoint of the Azure instance metadata service.
+      if (target.pathname === '/metadata/identity/oauth2/token') {
+        if (request.headers['metadata'] !== 'true')
+          return json(response, 400, { error: 'invalid_request' })
+        const resource = target.searchParams.get('resource') ?? ''
+        return json(response, 200, {
+          access_token: await sign({ audience: resource, preset: 'azure' }),
+        })
+      }
+
       // The identity endpoint of the Google Cloud metadata server.
       if (target.pathname === '/computeMetadata/v1/instance/service-accounts/default/identity') {
         if (request.headers['metadata-flavor'] !== 'Google') return text(response, 403, 'Forbidden')
@@ -155,6 +185,9 @@ export async function create(): Promise<Issuer> {
         server.closeAllConnections()
       }),
     async env(options) {
+      if (options.preset === 'azure')
+        return { IDENTITY_ENDPOINT: `${url}/azure/identity`, IDENTITY_HEADER: requestToken }
+
       if (options.preset === 'circleci')
         return {
           CIRCLECI: 'true',
@@ -182,6 +215,11 @@ export async function create(): Promise<Issuer> {
         return { GITLAB_CI: 'true', [variable]: await sign({ audience, preset: 'gitlab' }) }
       }
 
+      if (options.preset === 'kubernetes')
+        throw new TypeError(
+          'Kubernetes projects the token into a file. Write `sign()` to a file, and read it with `Source.file`.',
+        )
+
       return {
         VERCEL: '1',
         VERCEL_OIDC_TOKEN: await sign({
@@ -197,6 +235,13 @@ export async function create(): Promise<Issuer> {
 
 /** Claims of each platform, with fixed sample values. */
 const presets: Record<Preset, Readonly<Record<string, unknown>>> = {
+  azure: {
+    appid: 'f0e1d2c3-0000-4000-8000-000000000000',
+    idtyp: 'app',
+    oid: '9a8b7c6d-0000-4000-8000-000000000000',
+    sub: '9a8b7c6d-0000-4000-8000-000000000000',
+    tid: '72f988bf-0000-4000-8000-000000000000',
+  },
   circleci: {
     'oidc.circleci.com/project-id': 'c1d2e3f4-0000-4000-8000-000000000000',
     'oidc.circleci.com/vcs-origin': 'github.com/acme/app',
@@ -228,6 +273,13 @@ const presets: Record<Preset, Readonly<Record<string, unknown>>> = {
     ref: 'main',
     ref_type: 'branch',
     sub: 'project_path:acme/app:ref_type:branch:ref:main',
+  },
+  kubernetes: {
+    'kubernetes.io': {
+      namespace: 'default',
+      serviceaccount: { name: 'app', uid: '5e4d3c2b-0000-4000-8000-000000000000' },
+    },
+    sub: 'system:serviceaccount:default:app',
   },
   vercel: {
     environment: 'production',

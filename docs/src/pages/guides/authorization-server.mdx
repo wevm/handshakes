@@ -41,11 +41,16 @@ export const policies = [
 ]
 ```
 
-| Preset                 | Matches                                                   | Default issuer                                |
-| ---------------------- | --------------------------------------------------------- | --------------------------------------------- |
-| `Policy.githubActions` | `repository_id`, and optionally `ref` and `environment`   | `https://token.actions.githubusercontent.com` |
-| `Policy.vercel`        | `owner_id` and `project_id`, and optionally `environment` | `https://oidc.vercel.com/<team>`, from `team` |
-| `Policy.from`          | Any exact claims                                          | None. `issuer` is required                    |
+| Preset                 | Matches                                                                    | Default issuer                                      |
+| ---------------------- | -------------------------------------------------------------------------- | --------------------------------------------------- |
+| `Policy.azure`         | `tid` and `oid`                                                            | `https://login.microsoftonline.com/<tenantId>/v2.0` |
+| `Policy.circleci`      | `oidc.circleci.com/project-id`, and optionally `oidc.circleci.com/vcs-ref` | `https://oidc.circleci.com/org/<organizationId>`    |
+| `Policy.gcp`           | `sub`, the unique ID of the service account                                | `https://accounts.google.com`                       |
+| `Policy.githubActions` | `repository_id`, and optionally `ref` and `environment`                    | `https://token.actions.githubusercontent.com`       |
+| `Policy.gitlab`        | `project_id`, and optionally `ref`, `ref_type`, and `environment`          | `https://gitlab.com`                                |
+| `Policy.kubernetes`    | `sub`, `system:serviceaccount:<namespace>:<serviceAccount>`                | None. `issuer` is required                          |
+| `Policy.vercel`        | `owner_id` and `project_id`, and optionally `environment`                  | `https://oidc.vercel.com/<team>`, from `team`       |
+| `Policy.from`          | Any exact claims                                                           | None. `issuer` is required                          |
 
 Claims match exactly. An array matches any of its values, and a number in the token compares as a string. A policy without claims would match every token of its issuer, so `Server.create` throws a `TypeError` for one.
 

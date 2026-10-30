@@ -32,6 +32,7 @@ export const policies = [
 - **`clientId`:** The OAuth client that receives the issued token. The Better Auth adapter requires it.
 - **`id`:** The identifier of the policy.
 - **`issuer`:** The exact `iss` of the subject token. The keys come from its discovery document.
+- **`maxAge`:** The longest age of the subject token, from its `iat`, in seconds. A token without `iat` is refused. Default: any age.
 - **`maxLifetime`:** The longest lifetime of the issued credential, in seconds. The credential also expires no later than the subject token. Default: the lifetime that the server sets.
 - **`resources`:** The RFC 8707 resources that a request may name. A request for another resource receives `invalid_target`. Default: none, so a request that names a resource is refused.
 - **`scopes`:** The scopes of the issued credential. A request may ask for a subset.
@@ -44,6 +45,9 @@ A policy matches a subject token when every rule holds:
 - **Audience:** One of the `aud` values equals `audience`.
 - **Claims:** Each claim of `claims` equals the claim of the token, or one of its values for an array. A number in the token compares as a string, so `repository_id: 812345` matches `'812345'`. A claim that is absent, or not a string or number, never matches.
 - **Signature and time:** The signature verifies with a key of the issuer, `exp` is in the future, and `nbf` is at most 60 seconds ahead.
+- **Age:** If the policy sets `maxAge`, `iat` is at most `maxAge` seconds ago, with 60 seconds of leeway.
+
+Set `maxAge` for a platform that signs a token on request, such as GitHub Actions or Google Cloud. A short `maxAge` limits the use of a leaked subject token. Do not set it for a platform that issues one token at the start of a job, such as GitLab CI or CircleCI, since a long job then fails.
 
 A policy needs at least one claim, since a policy without claims would match every token of its issuer, such as every repository on GitHub. `Server.create` and `Resource.create` throw a `TypeError` for it.
 
@@ -63,6 +67,86 @@ Policy.from({
 ## Stable Identifiers
 
 Match claims that cannot change, such as `repository_id`, `owner_id`, and `project_id`. Never match names, such as `repository` or `project`. After a rename or a deletion, another repository can take the name. An identifier never passes to another repository. The presets below match identifiers only.
+
+## Policy.azure
+
+Returns a policy for an Azure managed identity. It matches `tid` and `oid`, the IDs of the tenant and the identity, never a name.
+
+```ts
+import { Policy } from 'handshakes/server'
+
+// Accepts the managed identity of one App Service app
+Policy.azure({
+  audience: 'f0e1d2c3-0000-4000-8000-000000000000',
+  objectId: '9a8b7c6d-0000-4000-8000-000000000000',
+  scopes: ['data:read'],
+  tenantId: '72f988bf-0000-4000-8000-000000000000',
+})
+```
+
+- **`audience`:** The `aud` of the token. A v2.0 token carries the application (client) ID of the resource, not its application ID URI. Required.
+- **`clientId`:** The OAuth client that receives the issued token.
+- **`id`:** Default: `azure:<tenantId>:<objectId>`.
+- **`issuer`:** Default: `https://login.microsoftonline.com/<tenantId>/v2.0`. A v1.0 token carries `https://sts.windows.net/<tenantId>/`, so set `issuer` for one.
+- **`maxAge`:** The longest age of the subject token, in seconds.
+- **`maxLifetime`:** In seconds.
+- **`objectId`:** The `oid`, the object ID of the managed identity. Required.
+- **`resources`:** The RFC 8707 resources that a request may name.
+- **`scopes`:** The scopes of the issued credential. Required.
+- **`tenantId`:** The `tid`, the ID of the Microsoft Entra tenant. Required.
+
+## Policy.circleci
+
+Returns a policy for CircleCI. It matches `oidc.circleci.com/project-id`, never the name of the project. The issuer is the issuer of the organization.
+
+```ts
+import { Policy } from 'handshakes/server'
+
+// Accepts the main branch of one CircleCI project
+Policy.circleci({
+  organizationId: 'b6a6b6f0-0000-4000-8000-000000000000',
+  projectId: 'c1d2e3f4-0000-4000-8000-000000000000',
+  ref: 'refs/heads/main',
+  scopes: ['data:read'],
+})
+```
+
+- **`audience`:** Default: the organization ID, which is the `aud` of `CIRCLE_OIDC_TOKEN_V2`.
+- **`clientId`:** The OAuth client that receives the issued token.
+- **`id`:** Default: `circleci:<projectId>:<ref>`, with `*` when `ref` is not set.
+- **`issuer`:** Default: `https://oidc.circleci.com/org/<organizationId>`.
+- **`maxAge`:** The longest age of the subject token, in seconds.
+- **`maxLifetime`:** In seconds.
+- **`organizationId`:** The ID of the CircleCI organization. Required.
+- **`projectId`:** The ID of the CircleCI project. Required.
+- **`ref`:** The Git ref of the job, such as `refs/heads/main`. Adds the `oidc.circleci.com/vcs-ref` claim. Default: any ref.
+- **`resources`:** The RFC 8707 resources that a request may name.
+- **`scopes`:** The scopes of the issued credential. Required.
+
+## Policy.gcp
+
+Returns a policy for a Google Cloud service account. It matches `sub`, the unique ID of the service account, never its email. After a deletion, a new service account can take the email.
+
+```ts
+import { Policy } from 'handshakes/server'
+
+// Accepts the identity tokens of one service account
+Policy.gcp({
+  audience: 'https://auth.example.com',
+  scopes: ['data:read'],
+  serviceAccountId: '104857600000000000000',
+})
+```
+
+- **`audience`:** The `aud` that the workload requests. Required.
+- **`clientId`:** The OAuth client that receives the issued token.
+- **`id`:** Default: `gcp:<serviceAccountId>`.
+- **`issuer`:** Default: `https://accounts.google.com`.
+- **`maxAge`:** The longest age of the subject token, in seconds.
+- **`maxLifetime`:** In seconds.
+- **`resources`:** The RFC 8707 resources that a request may name.
+- **`scopes`:** The scopes of the issued credential. Required.
+- **`serviceAccountId`:** The unique ID of the service account, a number, which is the `sub` of its tokens. Required.
 
 ## Policy.githubActions
 
@@ -85,11 +169,72 @@ Policy.githubActions({
 - **`environment`:** The GitHub deployment environment of the job, such as `production`. Adds the `environment` claim.
 - **`id`:** Default: `githubActions:<repositoryId>:<ref>`, with `*` when `ref` is not set.
 - **`issuer`:** Default: `https://token.actions.githubusercontent.com`.
+- **`maxAge`:** The longest age of the subject token, in seconds.
 - **`maxLifetime`:** In seconds.
 - **`ref`:** The Git ref of the job, such as `refs/heads/main`. Adds the `ref` claim. Default: any ref.
 - **`repositoryId`:** The `repository_id` of the repository, which stays the same after a rename. Required.
 - **`resources`:** The RFC 8707 resources that a request may name.
 - **`scopes`:** The scopes of the issued credential. Required.
+
+## Policy.gitlab
+
+Returns a policy for GitLab CI. It matches `project_id`, never the path of the project.
+
+```ts
+import { Policy } from 'handshakes/server'
+
+// Accepts the main branch of one GitLab project, but not a tag named main
+Policy.gitlab({
+  audience: 'https://auth.example.com',
+  projectId: '812345',
+  ref: 'main',
+  refType: 'branch',
+  scopes: ['data:read'],
+})
+```
+
+- **`audience`:** The `aud` that `id_tokens` declares. Required.
+- **`clientId`:** The OAuth client that receives the issued token.
+- **`environment`:** The GitLab environment of the job, such as `production`. Adds the `environment` claim.
+- **`id`:** Default: `gitlab:<projectId>:<ref>`, with `*` when `ref` is not set.
+- **`issuer`:** Default: `https://gitlab.com`. Set it for a self-managed instance.
+- **`maxAge`:** The longest age of the subject token, in seconds.
+- **`maxLifetime`:** In seconds.
+- **`projectId`:** The `project_id` of the project, which stays the same after a rename. Required.
+- **`ref`:** The branch or tag of the job, such as `main`. Adds the `ref` claim. Default: any ref.
+- **`refType`:** `branch` or `tag`. Adds the `ref_type` claim. A branch and a tag can have the same name. Default: either.
+- **`resources`:** The RFC 8707 resources that a request may name.
+- **`scopes`:** The scopes of the issued credential. Required.
+
+## Policy.kubernetes
+
+Returns a policy for a Kubernetes service account. It matches `sub`, which is `system:serviceaccount:<namespace>:<serviceAccount>`. The issuer of the cluster must serve its discovery document at a public `https://` address.
+
+A service account has no ID claim at the top level of the token, so the preset matches its name. The issuer names one cluster, and only an administrator of that cluster can create a service account.
+
+```ts
+import { Policy } from 'handshakes/server'
+
+// Accepts the projected token of one service account
+Policy.kubernetes({
+  audience: 'https://auth.example.com',
+  issuer: 'https://oidc.eks.us-east-1.amazonaws.com/id/EXAMPLE',
+  namespace: 'production',
+  scopes: ['data:read'],
+  serviceAccount: 'deployer',
+})
+```
+
+- **`audience`:** The `aud` of the projected token. Required.
+- **`clientId`:** The OAuth client that receives the issued token.
+- **`id`:** Default: `kubernetes:<namespace>:<serviceAccount>`.
+- **`issuer`:** The service account issuer of the cluster. Required.
+- **`maxAge`:** The longest age of the subject token, in seconds.
+- **`maxLifetime`:** In seconds.
+- **`namespace`:** The namespace of the service account. Required.
+- **`resources`:** The RFC 8707 resources that a request may name.
+- **`scopes`:** The scopes of the issued credential. Required.
+- **`serviceAccount`:** The name of the service account. Required.
 
 ## Policy.vercel
 
@@ -114,6 +259,7 @@ Policy.vercel({
 - **`environment`:** `development`, `preview`, `production`, or a custom environment. Adds the `environment` claim. Default: any.
 - **`id`:** Default: `vercel:<projectId>:<environment>`, with `*` when `environment` is not set.
 - **`issuer`:** Default: `https://oidc.vercel.com/<team>`, the team issuer.
+- **`maxAge`:** The longest age of the subject token, in seconds.
 - **`maxLifetime`:** In seconds.
 - **`ownerId`:** The `owner_id` of the team. Required.
 - **`projectId`:** The `project_id` of the project. Required.
@@ -125,17 +271,17 @@ Policy.vercel({
 
 ## Policy.from
 
-Returns `policy` unchanged, typed as a policy. Use it for an issuer without a preset, such as GitLab or a Kubernetes cluster.
+Returns `policy` unchanged, typed as a policy. Use it for an issuer without a preset, such as a SPIRE server.
 
 ```ts
 import { Policy } from 'handshakes/server'
 
-// Accepts the main branch of one GitLab project, by its ID
+// Accepts the JWT-SVID of one SPIFFE ID
 Policy.from({
   audience: 'https://auth.example.com',
-  claims: { project_id: '812345', ref: 'main', ref_type: 'branch' },
-  id: 'gitlab:812345:main',
-  issuer: 'https://gitlab.com',
+  claims: { sub: 'spiffe://acme.example/ns/production/sa/api' },
+  id: 'spiffe:api',
+  issuer: 'https://oidc.acme.example',
   scopes: ['data:read'],
 })
 ```
